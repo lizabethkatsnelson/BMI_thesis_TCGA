@@ -1,0 +1,163 @@
+---
+title: "eda"
+author: "Lizabeth Katsnelson"
+date: "6/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=F, results='hide', message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(data.table)
+library(ggplot2)
+#library(ggpubr)
+```
+
+```{r}
+meta <- read.table("serous_CCNE1_meta.txt", sep='\t', header=T)
+meta$CCNE1_CNV <- as.factor(ifelse(meta$CCNE1_CNV == "1", "Amplified", "Non_Amplified"))
+meta$age_at_diagnosis <- meta$age_at_diagnosis/365.25
+colnames(meta)[1] <- "TCGA_ID"
+meta
+
+summary(meta$age_at_diagnosis)
+
+ccne1_mutation_meta <- read.table("ccne1_mutation_meta.txt", sep='\t', header=T)
+ccne1_mutation_meta <- ccne1_mutation_meta[,-2]
+ccne1_mutation_meta
+
+merged_meta <- join(meta, ccne1_mutation_meta, type="left")
+merged_meta$TP53 <- as.factor(merged_meta$TP53)
+merged_meta
+
+```
+
+
+```{r}
+g1 <-  ggplot(meta, aes(x=CCNE1_CNV, fill=CCNE1_CNV)) +
+  geom_bar() + 
+  scale_fill_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") + 
+  facet_wrap(factor(meta$vital_status))
+g1
+
+
+g2 <- ggplot(meta, aes(x=CCNE1_CNV, y=age_at_diagnosis, color=CCNE1_CNV)) +
+  geom_boxplot() +
+  scale_color_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") + 
+  facet_wrap(factor(meta$vital_status))
+g2
+
+g3 <- ggplot(meta, aes(x=CCNE1_CNV, y=age_at_diagnosis, color=CCNE1_CNV)) +
+  geom_violin() +
+  scale_color_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") + 
+  facet_wrap(factor(meta$vital_status))
+g3
+
+
+
+```
+
+
+```{r}
+
+g4 <- ggplot(meta, aes(x=CCNE1_CNV, y=age_at_diagnosis)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position=position_jitterdodge(),aes(group=CCNE1_CNV, color=vital_status)) +
+  scale_color_manual(values = c(alive = "dodgerblue2", dead = "darkred"), name="Vital Status") +
+  ggtitle("CCNE1 CNV by Age Pre-Filtered") + xlab("CCNE1 CNV") + ylab("Age at Diagnosis") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+jpeg(file = "./figures/eda_cnv_vs_age.jpeg", units="in", width=5, height=4, res=500)
+g4
+dev.off()
+```
+
+
+
+
+```{r}
+#### filtered for mutation
+meta_mut <- read.table("filered_true_serous_meta.tsv", sep='\t', header=T)
+meta_mut$age_at_diagnosis <- meta_mut$age_at_diagnosis/365.25
+meta_mut
+plyr::count(meta_mut$CCNE1_CNV)
+
+
+g5 <- ggplot(meta_mut, aes(x=CCNE1_CNV, y=age_at_diagnosis)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position=position_jitterdodge(),aes(group=CCNE1_CNV, color=vital_status)) +
+  scale_color_manual(values = c(alive = "dodgerblue2", dead = "darkred"), name="Vital Status") +
+  ggtitle("CCNE1 CNV by Age Post-Filtered") + xlab("CCNE1 CNV") + ylab("Age at Diagnosis") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+jpeg(file = "./figures/eda_cnv_vs_age_filtered.jpeg", units="in", width=5, height=4, res=500)
+g5
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+### trying tcga stat
+
+library(TCGA2STAT)  # load TCGA library
+
+data <- getTCGA(disease = "UCEC", data.type = "RNASeq2", clinical = T) # import the UCS RNA seq data from TCGA 
+#View(data)
+
+dat  <-  as.data.frame(data[["dat"]]) 
+clin  <-  as.data.frame(data[["clinical"]]) 
+merged <- as.data.frame(data[["merged.dat"]]) 
+
+clin[,1] <- rownames(clin)
+colnames(clin)[1] <- "TCGA_ID"
+
+clin
+dat
+merged
+
+plyr::count(clin$histologicaltype)
+
+## filter for serous only
+clin_ser <- clin %>% filter(histologicaltype == "mixed serous and endometrioid" | histologicaltype == "serous endometrial adenocarcinoma")
+clin_ser
+
+groups <- read.table("rna_sample_groups.txt", sep='\t', header=T)
+groups
+
+clin_ser_groups <- join(groups, clin_ser, type="left")
+clin_ser_groups
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

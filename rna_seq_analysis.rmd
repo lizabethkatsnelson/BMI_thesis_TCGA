@@ -1,0 +1,551 @@
+---
+title: "RNA Seq Analysis"
+author: "Lizabeth Katsnelson"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(data.table)
+library(DESeq2)
+library(pheatmap)
+library(RColorBrewer)
+library(vsn)
+library(genefilter)
+library(IHW)
+library(ggplot2)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(biomaRt)
+library(gridExtra)
+library(matrixStats)
+library(ComplexHeatmap)
+library(circlize)
+library(harrypotter)
+
+```
+
+
+### PREPROCSESSING
+```{r}
+### RNA counts dataframe
+rna_dataset <- read.table("~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/rna_counts_matrix.txt", sep="\t", header=T, row.names = 1)
+row.names(rna_dataset) <- gsub(x = row.names(rna_dataset), pattern = "\\..*", replacement = "") # remove decimals from ENSG numbers
+rna_dataset
+
+### Sample descriptions
+groups <- read.table(file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/rna_sample_groups.txt", sep = "\t", header=T, row.names = 1)
+row.names(groups) <- gsub(x = row.names(groups), pattern = "\\-", replacement = "\\.")  # change hyphens to periods to match data matrix
+groups$CCNE1_Group <- gsub(x = groups$CCNE1_Group, pattern = "\\-", replacement = "\\_")  # change hyphens to underscore
+groups$CCNE1_Group <- as.factor(groups$CCNE1_Group)
+groups
+
+
+
+### format for outlier analysis
+#rna_dataset <- read.table("~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/rna_counts_matrix.txt", sep="\t", header=T)
+#rna_dataset$Gene_Id <- gsub(x = rna_dataset$Gene_Id, pattern = "\\..*", replacement = "") # remove decimals from ENSG numbers
+#rna_dataset
+#write.table(rna_dataset, file = "serous_rna_matrix.tsv", sep = "\t", col.names = T, row.names = F, quote = F) 
+#rna_dataset <- read.table("serous_rna_matrix.tsv", sep="\t", header=T)
+#rna_dataset  
+
+#groups <- read.table(file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/rna_sample_groups.txt", sep = "\t", header=T)
+#groups$TCGA_ID <- gsub(x = groups$TCGA_ID, pattern = "\\-", replacement = "\\.")  # change hyphens to periods to match data matrix
+#groups$CCNE1_Group <- gsub(x = groups$CCNE1_Group, pattern = "\\-", replacement = "\\_")  # change hyphens to underscore
+#groups$CCNE1_Group <- as.factor(groups$CCNE1_Group)
+#groups_t <- data.frame(t(groups))
+#colnames(groups_t) <- as.character(unlist(groups_t[1,]))
+#groups_t = groups_t[-1, ]
+#groups_t
+#write.table(groups_t, file = "outlier_meta_df.tsv", sep = "\t", col.names = T, row.names = T, quote = F) 
+#groups_t <- read.table("outlier_meta_df.tsv", sep="\t", header=T)
+#groups_t
+
+```
+
+
+
+```{r}
+#gene_ids <- data.frame(gene_id = row.names(rna_dataset))
+#gene_ids$gene_id <- as.character(gene_ids$gene_id)
+#gene_ids
+#write.table(gene_ids, file = "gene_ids.txt", sep = "\t", col.names = T, row.names = F, quote = F)
+
+#geneid_to_symbol <- read.table("geneid_to_symbol.txt", sep='\t', header=T)
+#geneid_to_symbol
+
+#test <- join(gene_ids, geneid_to_symbol, type="left")
+#test
+#test_naomit <- na.omit(test)
+#test_naomit
+
+#gene_ids$symbol <- mapIds(org.Hs.eg.db, keys=gene_ids$gene_id, column="SYMBOL", keytype="ENSEMBL", multiVals="first")
+#gene_ids
+
+#gene_ids_naomit <- na.omit(gene_ids)
+#gene_ids_naomit
+
+# use biomart to get gene symbols
+#mart<- useDataset("hsapiens_gene_ensembl", useMart("ENSEMBL_MART_ENSEMBL"))
+#bm <- getBM(filters="ensembl_gene_id", attributes=c("ensembl_gene_id", "entrezgene", "hgnc_symbol"), values=gene_ids$gene_id, mart=mart)
+#colnames(bm)[1] <- "gene_id"
+#bm
+#gene_ids
+
+#bm_gene_to_symbol <- join(gene_ids, bm, type="left")
+#bm_gene_to_symbol <- bm_gene_to_symbol[,-2] # get rid of entrez number
+#bm_gene_to_symbol
+
+# if gene symbol missing, use ensembl gene id
+#bm_gene_to_symbol$hgnc_symbol <- ifelse(bm_gene_to_symbol$hgnc_symbol == "" | is.na(bm_gene_to_symbol$hgnc_symbol), bm_gene_to_symbol$gene_id, bm_gene_to_symbol$hgnc_symbol)
+#bm_gene_to_symbol
+
+#test <- na.omit(bm_gene_to_symbol)
+#test ### test to see if any more NA's - None left
+
+# add gene symbols to rna matrix
+#rna_df_gene_symbols <- join(bm_gene_to_symbol_unique, rna_dataset, type="left")
+#rna_df_gene_symbols <- rna_df_gene_symbols[,-1] # remove ensembl ids
+#rownames(rna_df_gene_symbols) <- rna_df_gene_symbols[,1] # make gene symbol names the rownames 
+##### error in adding symbols as rownames - duplicated gene symbols (isoforms), cannot have duplicated row names
+#rna_df_gene_symbols
+
+### will use conversion df for later analysis
+```
+
+
+```{r}
+### Create DESeq2 variables
+CountTable <- as.data.frame(rna_dataset)
+CountTable
+
+samples <- data.frame(row.names = row.names(groups) , condition = as.factor(groups$CCNE1_Group))
+samples
+
+### Clustering sample groups together
+# two sample groups df's
+amp_samp <- subset(samples, condition == "Amplified") 
+amp_samp
+non_amp_samp <- subset(samples, condition == "Non_Amplified") 
+non_amp_samp
+
+amp_samp_ids <- c(rownames(amp_samp)) # list of ID's for amplified samples
+amp_counts <- CountTable[, colnames(CountTable) %in% amp_samp_ids] # filter counts table for only amplified samples
+amp_counts
+
+non_amp_samp_ids <- c(rownames(non_amp_samp))
+non_amp_counts <-  CountTable[, colnames(CountTable) %in% non_amp_samp_ids]
+non_amp_counts
+
+CountTable_grouped <- cbind(amp_counts, non_amp_counts) # cbind df's, make counts table again with grouped sampels
+CountTable_grouped
+
+samples_grouped <- rbind(amp_samp, non_amp_samp)
+samples_grouped
+
+
+######### adding more meta data ######### 
+
+samples_grouped_cols <- data.frame(TCGA_ID = as.character(rownames(samples_grouped)), condition = as.factor(samples_grouped$condition))
+samples_grouped_cols
+
+clinical <- read.table("~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/serous_CCNE1_meta.txt", sep='\t', header=T) # read in meta data
+clinical$submitter_id <- gsub(x = clinical$submitter_id, pattern = "\\-", replacement = "\\.")  # change hyphens to periods 
+colnames(clinical)[1] <- "TCGA_ID"
+clinical
+
+ccne1_mutation_meta <- read.table("ccne1_mutation_meta.txt", sep='\t', header=T)
+ccne1_mutation_meta$TCGA_ID <- gsub(x = ccne1_mutation_meta$TCGA_ID, pattern = "\\-", replacement = "\\.")  # change hyphens to periods 
+ccne1_mutation_meta <- ccne1_mutation_meta[,-2]
+ccne1_mutation_meta
+
+meta_somatic_mut <- join(clinical, ccne1_mutation_meta, type="left")
+meta_somatic_mut
+
+meta <- join(samples_grouped_cols, meta_somatic_mut, type="left")
+meta
+
+# group by condition and mutations 
+meta_grouped <- meta[order(meta$condition, meta$TP53, meta$PIK3CA, meta$PPP2R1A, meta$FBXW7),]
+meta_grouped$TCGA_ID <- as.character(meta_grouped$TCGA_ID)
+
+# rearrange samples in counts table to match order in meta data
+CountTable_grouped <- CountTable_grouped[c(meta_grouped$TCGA_ID)]
+CountTable_grouped
+
+meta_grouped
+
+# change TCGA IDs to rownames
+meta_grouped_rownames <- meta_grouped %>% remove_rownames %>% column_to_rownames(var="TCGA_ID")
+meta_grouped_rownames
+```
+
+
+
+
+```{r}
+### Run DESeq2
+dds <- DESeqDataSetFromMatrix(countData = CountTable_grouped, colData=meta_grouped_rownames, design=~condition)
+dds
+
+dds <- DESeq(dds)
+res <- results(dds)
+head(res)
+summary(res, alpha=0.01)
+
+# switch results to show non-amp as control (and use the comparison to be "amplified" as test condition)
+res_tran <- res
+res_tran$log2FoldChange  <- res_tran$log2FoldChange*-1
+summary(res_tran, alpha=0.01)
+#res_tran
+
+### add protein names
+res_tran$symbol <- mapIds(org.Hs.eg.db, keys=row.names(res_tran), column="SYMBOL", keytype="ENSEMBL", multiVals="first")
+res_tran
+
+res_tran_df <- as.data.frame(res_tran)
+res_tran_df
+res_tran_df <- na.omit(res_tran_df)
+res_tran_df
+```
+
+```{r}
+# make dataframe with log2 fold changeand padj values for each gene
+dds_res_df <- data.frame(row.names = rownames(res_tran), symbol = res_tran$symbol, log2fc = res_tran$log2FoldChange, padj = res_tran$padj)
+dds_res_df
+
+# make a df for the "top genes" with absolute value l2fc > 1 and padj < 0.05
+top_genes <- subset(dds_res_df, (abs(log2fc)>1 & padj<0.05))
+top_genes <- top_genes[order(top_genes$padj, decreasing=F),]
+top_genes
+
+### missing gene names: 
+# ENSG00000211951 = IGHV2-26,  
+# ENSG00000252272 = RNA5SP470, 
+# ENSG00000211638 = IGLV8-61, 
+# ENSG00000211670 = IGLV3-9 
+# ENSG00000267006 = AC008507.2
+# ENSG00000241755 = IGKV1-9
+# ENSG00000211905 = IGHJ1
+# ENSG00000188525 = AC010969.1
+# ENSG00000211970 = IGHV4-61
+# ENSG00000237111 = IGHJ3P
+
+write.table(top_genes, file = "RNA_top_genes.txt", sep = "\t", col.names = T, row.names = T, quote = F) 
+#### manually input gene names into file in text editor
+
+top_genes <- read.table("RNA_top_genes.txt", sep='\t', header=T, row.names = 1)
+top_genes
+
+# df of upregulated genes
+top_genes_up <- subset(top_genes, log2fc > 0)
+# downreg genes
+top_genes_down <- subset(top_genes, log2fc < 0)
+
+view(top_genes_up)
+view(top_genes_down)
+
+### Write out up and down df's for pathway analysis
+write.table(top_genes_up, file = "RNA_top_genes_up.txt", sep = "\t", col.names = T, row.names = T, quote = F) 
+write.table(top_genes_down, file = "RNA_top_genes_down.txt", sep = "\t", col.names = T, row.names = T, quote = F) 
+
+
+
+```
+
+```{r}
+# upreg genes - lowest p values
+par(mfrow=c(2,3))
+plotCounts(dds, gene="ENSG00000105171", intgroup="condition", normalized = T, main = "POP4") 
+plotCounts(dds, gene="ENSG00000131943", intgroup="condition", normalized = T, main = "C19orf12") 
+plotCounts(dds, gene="ENSG00000105176", intgroup="condition", normalized = T, main = "URI1")
+plotCounts(dds, gene="ENSG00000166289", intgroup="condition", normalized = T, main = "PLEKHF1") 
+plotCounts(dds, gene="ENSG00000169021", intgroup="condition", normalized = T, main = "UQCRFS1") 
+plotCounts(dds, gene="ENSG00000171747", intgroup="condition", normalized = T, main = "LGALS4") 
+```
+
+```{r}
+# downreg genes - lowest p values
+par(mfrow=c(2,3))
+plotCounts(dds, gene="ENSG00000104327", intgroup="condition", normalized = T, main = "CALB1") 
+plotCounts(dds, gene="ENSG00000211951", intgroup="condition", normalized = T, main = "IGHV2-26")
+plotCounts(dds, gene="ENSG00000168878", intgroup="condition", normalized = T, main = "SFTPB")
+plotCounts(dds, gene="ENSG00000211638", intgroup="condition", normalized = T, main = "IGLV8-61") 
+plotCounts(dds, gene="ENSG00000211670", intgroup="condition", normalized = T, main = "IGLV3-9") 
+plotCounts(dds, gene="ENSG00000064989", intgroup="condition", normalized = T, main = "CALCRL") 
+```
+
+
+
+
+
+
+
+
+
+```{r}
+# plotting based on p value (lowest p value genes) 
+par(mfrow=c(2,3))
+
+plotCounts(dds, gene="ENSG00000171747", intgroup="condition", normalized = T, main = "LGALS4") # chr19
+plotCounts(dds, gene="ENSG00000104327", intgroup="condition", normalized = T, main = "CALB1") # 8
+plotCounts(dds, gene="ENSG00000164266", intgroup="condition", normalized = T, main = "SPINK1") # 5
+plotCounts(dds, gene="ENSG00000016082", intgroup="condition", normalized = T, main = "ISL1") # 5
+plotCounts(dds, gene="ENSG00000197172", intgroup="condition", normalized = T, main = "MAGEA6") # X 
+plotCounts(dds, gene="ENSG00000159495", intgroup="condition", normalized = T, main = "TGM7") # 15
+
+
+#par(mfrow=c(2,3))
+
+#plotCounts(dds, gene="ENSG00000105171", intgroup="condition", normalized = T, main = "POP4") # POP4 - located 19q12
+#plotCounts(dds, gene="ENSG00000131943", intgroup="condition", normalized = T, main = "C19orf12") # C19orf12 *** CCNE1 is on 19q12
+#plotCounts(dds, gene="ENSG00000105176", intgroup="condition", normalized = T, main = "URI1") # URI1 - 19q12
+#plotCounts(dds, gene="ENSG00000166289", intgroup="condition", normalized = T, main = "PLEKHF1") # PLEKHF1 - 19q12
+#plotCounts(dds, gene="ENSG00000169021", intgroup="condition", normalized = T, main = "UQCRFS1") # UQCRFS1 - 19q12
+#plotCounts(dds, gene="ENSG00000171747", intgroup="condition", normalized = T, main = "LGALS4") # LGALS4 - 19q13.2
+
+
+
+
+#plotCounts(dds, gene="ENSG00000104327", intgroup="condition", normalized = T, main = "CALB1") # CALB1 - 8q21.3
+#plotCounts(dds, gene="ENSG00000164266", intgroup="condition", normalized = T, main = "SPINK1") # SPINK1 - 5q32
+#plotCounts(dds, gene="ENSG00000016082", intgroup="condition", normalized = T, main = "ISL1") # ISL1 - 5q11.1
+
+```
+
+```{r}
+## plot based on log2 fold change
+
+## highest l2fc
+par(mfrow=c(2,3))
+plotCounts(dds, gene="ENSG00000154997", intgroup="condition", normalized = T, main = "SEPT14") # SEPT14 - 7p11.2
+plotCounts(dds, gene="ENSG00000197172", intgroup="condition", normalized = T, main = "MAGEA6") # MAGEA6 - Xq28
+plotCounts(dds, gene="ENSG00000164266", intgroup="condition", normalized = T, main = "SPINK1") # SPINK1 - 5q32
+plotCounts(dds, gene="ENSG00000056291", intgroup="condition", normalized = T, main = "NPFFR2") # NPFFR2 - 4q13.3
+plotCounts(dds, gene="ENSG00000107187", intgroup="condition", normalized = T, main = "LHX3") # LHX3 - 9q34.3
+plotCounts(dds, gene="ENSG00000090402", intgroup="condition", normalized = T, main = "SI") # 3q26.1
+
+## lowest l2fc
+par(mfrow=c(2,3))
+plotCounts(dds, gene="ENSG00000261780", intgroup="condition", normalized = T, main = "LINC02582") # LINC02582 - chr18
+plotCounts(dds, gene="ENSG00000168878", intgroup="condition", normalized = T, main = "SFTPB") # SFTPB - 2p11.2
+plotCounts(dds, gene="ENSG00000104327", intgroup="condition", normalized = T, main = "CALB1") # CALB1 - 8q21.3
+plotCounts(dds, gene="ENSG00000211951", intgroup="condition", normalized = T, main = "IGHV2-26") # IGHV2-26 - chr14
+plotCounts(dds, gene="ENSG00000217330", intgroup="condition", normalized = T, main = "SSXP10") # SSXP10 - chr6
+plotCounts(dds, gene="ENSG00000253247", intgroup="condition", normalized = T, main = "IGHV3-76") # IGHV3-76 chr14
+
+
+par(mfrow=c(2,3))
+plotCounts(dds, gene="ENSG00000211905", intgroup="condition", normalized = T, main = "IGHJ1") 	
+plotCounts(dds, gene="ENSG00000109670", intgroup="condition", normalized = T, main = "FBXW7")
+plotCounts(dds, gene="ENSG00000105173", intgroup="condition", normalized = T, main = "CCNE1") 
+plotCounts(dds, gene="ENSG00000105171", intgroup="condition", normalized = T, main = "POP4") 
+plotCounts(dds, gene="ENSG00000131943", intgroup="condition", normalized = T, main = "C19orf12") 
+plotCounts(dds, gene="ENSG00000105176", intgroup="condition", normalized = T, main = "URI1") 
+
+
+
+```
+
+
+
+
+```{r}
+# Make a basic volcano plot
+
+par(mfrow=c(1,1))
+
+with(res_tran, plot(log2FoldChange, -log10(pvalue), pch=20, main="Differential Expression", xlim=c(-4.5,4.5)))
+
+# Add colored points: blue if padj<0.01, red if log2FC>1 and padj<0.05)
+with(subset(res_tran, padj<.01 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res_tran, padj<.01 & abs(log2FoldChange)>2), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+
+with(legend(-4.5, 28, c("padj < 0.01", "padj < .01 and |l2fc| > 2")))
+```
+
+```{r}
+# transform data, plot pca
+
+#nt <- normTransform(dds)
+#plotPCA(nt, intgroup="condition")
+
+#vst <- varianceStabilizingTransformation(dds, blind = F)
+#plotPCA(vst, intgroup="condition")
+
+#rlogt <- rlog(dds, blind = F)
+#plotPCA(rlogt, intgroup="condition")
+
+```
+
+
+
+```{r}
+# heatmap annotations
+df <- as.data.frame(colData(dds))
+df <- df[,-c(2:12, 17:24)]
+df
+
+
+#df <- data.frame(row.names = rownames(df), condition = df$condition, race = df$race, vital_status = df$vital_status, 
+#                 TP53=df$TP53, PIK3CA=df$PIK3CA, PPP2R1A=df$PPP2R1A, FBXW7=df$FBXW7, TTN=df$TTN, CHD4=df$CHD4, 
+#                 ARHGAP35=df$ARHGAP35, CSMD3=df$CSMD3,KMT2D=df$KMT2D, PTEN=df$PTEN)
+
+#plyr::count(df$race) # 6 fators
+
+#types <- data.frame(condition = samples_grouped$condition) 
+ha <- HeatmapAnnotation(df = df, 
+                        col = list(condition = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"),
+                                   TP53 = c("1"="#9A336F", "0"="white"),
+                                   PIK3CA = c("1"="#089EC7", "0"="white"), 
+                                   PPP2R1A = c("1"="#084D49", "0"="white"),
+                                   FBXW7 = c("1"="#FFA700", "0"="white")))
+
+
+
+#vital_status = c(alive = "forestgreen", dead = "ivory3"),
+#TTN = c("1"="blue", "0"="white"),
+                                   #CHD4 = c("1"="purple", "0"="white"),
+                                   #ARHGAP35 = c("1"="pink", "0"="white"),
+                                   #CSMD3 = c("1"="red", "0"="white"),
+                                   #KMT2D = c("1"="orange", "0"="white"),
+                                  # PTEN = c("1"="yellow", "0"="white")
+
+#race = c("american indian or alaska native" = "#006699", 
+#                                            "asian" = "#41A6D9", 
+#                                            "black or african american" = "#98C2D9",
+#                                            "native hawaiian or other pacific islander" = "#FDEBD0", 
+#                                            "not reported" = "#D9AC82", 
+#                                            "white" = "#B35900"),
+#ravenclaw <- c("#006699", "#1B80B3", "#41A6D9", "#98C2D9", "#D9AC82", "#D97C21", "#B35900")
+```
+
+
+
+
+
+
+```{r fig.height=6, fig.width=10}
+### plotting by lowest p value
+### log matrix, take rowmeans, subtract row means
+
+sigGenes <- subset(res_tran, (log2FoldChange > 1 & padj < 0.00001)) # find significant upregulated genes
+sigGenes
+sigGenes_names <- rownames(sigGenes)
+sigGenes_names
+
+mat = CountTable_grouped[ sigGenes_names, ] # select genes that are significant
+mat
+mat = log2(mat+1) # log transform
+mat = mat - rowMeans(mat) # Subtract the row means from each value
+mat 
+
+mat$symbol <- mapIds(org.Hs.eg.db, keys=row.names(mat), column="SYMBOL", keytype="ENSEMBL", multiVals="first")
+mat$symbol[21] <- "UQCRFS1P1" #ENSG00000226085
+mat$symbol[22] <- "RNA5SP470" #ENSG00000252272
+mat$symbol[25] <- "AC008507.1" #ENSG00000266910
+mat$symbol[27] <- "TAF9P3" #ENSG00000267692
+mat
+mat <- mat %>% remove_rownames %>% column_to_rownames(var="symbol")
+mat
+
+### supervised column clustering
+hm_upgenes_supervised <- Heatmap(mat, top_annotation = ha,
+        col = colorRamp2(c(-4, 0, 4), c("#0f6482", "#e0dbdb", "#9E031A")), 
+        heatmap_legend_param = list(title = "Expression"),
+        cluster_rows = T, cluster_columns = F, 
+        show_column_names = F, show_row_names = T, 
+        top_annotation_height = unit(2, "cm"),
+        row_names_gp = gpar(fontsize = 6))
+jpeg(file = "./figures/hm_upgenes_supervised.jpeg", units="in", width=10, height=6, res=500)
+hm_upgenes_supervised
+dev.off()
+
+
+### unsupervised column clustering
+hm_upgenes_unsupervised <- Heatmap(mat, top_annotation = ha,
+        col = colorRamp2(c(-4, 0, 4), c("#0f6482", "#e0dbdb", "#9E031A")), 
+        heatmap_legend_param = list(title = "Expression"),
+        cluster_rows = T, cluster_columns = T, 
+        show_column_names = F, show_row_names = T, 
+        top_annotation_height = unit(2, "cm"),
+        row_names_gp = gpar(fontsize = 6))
+jpeg(file = "./figures/hm_upgenes_unsupervised.jpeg", units="in", width=10, height=6, res=500)
+hm_upgenes_unsupervised
+dev.off()
+
+
+```
+
+
+
+
+
+```{r fig.height=6, fig.width=10}
+#### heatmap of both up and down genes
+
+sigGenes_up <- subset(res_tran, (log2FoldChange > 2 & padj < 0.001))
+sigGenes_down <- subset(res_tran, (log2FoldChange < -2 & padj < 0.01))
+sigGenes_up_names <- rownames(sigGenes_up)
+sigGenes_down_names <- rownames(sigGenes_down)
+
+
+mat_up = CountTable_grouped[ sigGenes_up_names, ] 
+mat_down = CountTable_grouped[ sigGenes_down_names, ] 
+mat = rbind(mat_up, mat_down)
+mat = log2(mat+1)
+mat = mat - rowMeans(mat) # Subtract the row means from each value
+mat$symbol <- mapIds(org.Hs.eg.db, keys=row.names(mat), column="SYMBOL", keytype="ENSEMBL", multiVals="first")
+mat[,133:136]
+mat$symbol[32] <- "RNA5SP470" #ENSG00000252272
+mat$symbol[35] <- "AC008507.2" #ENSG00000267006
+mat$symbol[40] <- "IGLV8-61" #ENSG00000211638
+mat$symbol[41] <- "IGLV3-9 " #ENSG00000211670
+mat$symbol[42] <- "IGHJ1" #ENSG00000211905
+mat$symbol[43] <- "IGHV2-26" #ENSG00000211951
+mat$symbol[44] <- "IGHV4-61" #ENSG00000211970
+mat$symbol[45] <- "IGHJ3P" #ENSG00000237111
+mat$symbol[46] <- "IGKV1-9" #ENSG00000241755
+mat
+mat <- mat %>% remove_rownames %>% column_to_rownames(var="symbol")
+mat
+
+
+### supervised column clustering
+hm_up_down_genes_supervised <- Heatmap(mat, top_annotation = ha,
+        col = colorRamp2(c(-5, 0, 5), c("#0f6482", "#e0dbdb", "#9E031A")), 
+        heatmap_legend_param = list(title = "Expression"),
+        cluster_rows = T, cluster_columns = F, 
+        show_column_names = F, show_row_names = T, 
+        top_annotation_height = unit(2, "cm"),
+        row_names_gp = gpar(fontsize = 6))
+jpeg(file = "./figures/hm_up_down_genes_supervised.jpeg", units="in", width=10, height=6, res=500)
+hm_up_down_genes_supervised
+dev.off()
+
+
+
+### unsupervised column clustering
+hm_up_down_genes_unsupervised <- Heatmap(mat, top_annotation = ha,
+        col = colorRamp2(c(-5, 0, 5), c("#0f6482", "#e0dbdb", "#9E031A")), 
+        heatmap_legend_param = list(title = "Expression"),
+        cluster_rows = T, cluster_columns = T, 
+        show_column_names = F, show_row_names = T, 
+        top_annotation_height = unit(2, "cm"),
+        row_names_gp = gpar(fontsize = 6))
+jpeg(file = "./figures/hm_up_down_genes_unsupervised.jpeg", units="in", width=10, height=6, res=500)
+hm_up_down_genes_unsupervised
+dev.off()
+
+
+```
+
+

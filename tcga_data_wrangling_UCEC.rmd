@@ -1,0 +1,897 @@
+---
+title: "GDC Data Wrangling"
+author: "Lizabeth Katsnelson"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=F, results='hide', message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(data.table)
+library(ggplot2)
+```
+
+---
+
+### Data Download
+
+  * GDC data portal (https://portal.gdc.cancer.gov/)
+  * Click on "Exploration"
+  * Enter query terms on side panel (check all boxes that apply) - see query terms below for this project
+  * Click "View Files in Repository"
+  * Select data types on side panel (check all boxes that apply) - see data types below for this project
+  * Add files to cart (cart icons next to each file)
+  * Go to cart (top right corner)
+  * Click "Download" button, then click "Cart" to download the data files
+  * Click "Sample Sheet" to download information on the files
+  * Click "Clinical" button, then click "TSV" to download meta data
+  * Click "Biospecimen" button, then click "TSV" to download sample information (case ID's with matching specimen ID's for each data type)
+
+
+#### Exploration: Query terms 
+  * Project ID: "TCGA-UCEC" 
+  * Primary Site: "Corpus Uteri"
+  * Disease Type: "Cystic, Mucinous, and Serous Neoplasms"
+
+
+#### Repository: Search for Data Types
+  * Copy Number Variation (CNV)
+    - Data Category: "Copy Number Variation"
+    - Data Type: "Gene Level Copy Number Scores" - gives one matrix with all samples (GISTIC copy number scores)
+    
+  * Gene Expression (RNA-seq; miRNA may also be availble)
+    - Data Category: "Transcriptome Profiling"
+    - Experimental Strategy: "RNA-seq"
+    - Workflow Types: "HTSeq-Counts" - gives counts files per patient (alignment pipeline done by TCGA uses STAR)
+    
+  * Methylation
+    - Data Category: "DNA Methylation"
+    - Data Type: "Methylation Beta Value" - gives beta value matrices per patient (IDAT files already analyzed by TCGA)
+    
+  * Mutation 
+    - Data Category: "Simple Nucleotide Variation"
+    - Data Type: "Masked Somatic Mutation" (somatic); "Aggregated Somatic Mutation" (protected, will need further clearance for access)
+    - Workflow Type: choose which program for mutation calls (ie. VarScan, SomaticSniper, etc.) - gives maf files (matrix of mutations)
+
+---
+
+### Wrangling
+1. Copy Number Variation (CNV): Filter copy-number data into two groups: CyclinE1 (CCNE1) amplified and non-amplified
+2. Gene Expression: Create RNA-seq counts matrix with supplemental metadata (groups); RNA-seq HTseq counts data is downloaded as a folder containing counts files for each patient.
+3. Methylation: 
+4. Mutation (somatic and germline): 
+
+---
+---
+---
+
+### CNV Data 
+  - CNV file: UCEC.focal_score_by_genes.txt
+  - file contains all UCEC patients - need to filter for only serous using the meta data
+
+
+#### Clinical Metadata
+```{r}
+clinical <- read.table('~/Documents/BMI/_Thesis/data/CNV/clinical.cart.2019-02-27/clinical.tsv', sep = '\t', header = TRUE) # read in clinical file
+plyr::count(clinical$primary_diagnosis) # Count how many serous samples
+## "Papillary serous cystadenocarcinoma" (4), "Serous cystadenocarcinoma, NOS" (132), "Serous surface papillary carcinoma" (1)
+as_tibble(clinical)
+```
+
+#### Biospecimen Folder - Aliquot File
+```{r} 
+aliquot <- read.table('~/Documents/BMI/_Thesis/data/CNV/biospecimen.cart.2019-02-27/aliquot.tsv', sep = '\t', header = TRUE) # read aliquot file
+as_tibble(aliquot)
+```
+
+#### CNV File
+```{r, cnv focal scores}
+CNV <- read.table('~/Documents/BMI/_Thesis/data/CNV/tcga_annotated_cnv_download_2.27.19/UCEC.focal_score_by_genes.txt', sep = '\t', header = TRUE) # read cnv focal scores file
+as_tibble(CNV)
+
+### match case ID's to clinical and aliquot files' format
+colnames(CNV) <- tolower(colnames(CNV))   # make column names lower case
+colnames(CNV) <- gsub(x = colnames(CNV), pattern = "\\.", replacement = "\\-")  # change periods into hyphens 
+colnames(CNV) <- gsub(x = colnames(CNV), pattern = "x", replacement = "")  # remove "x" from beginning of id string (NOTE: may vary between studeies)
+as_tibble(CNV)
+```
+
+#### Match data ID's, filter data
+NOTE: Column names in CNV matrix correlate to "aliquot_id" column in aliquot file. "case_id" column in aliquot files matches "case_id" column in clinical file. Filter data to get only serous samples and create two groups: Amplifie and Non_Amplified (for CCNE1). 
+```{r}
+## create df of case id's from CNV df (columns)
+id <- as.data.frame(colnames(CNV)) # grab column names from CNV df (match aliquot_id from aliquot df)
+id <- as.data.frame(id[-(1:3),]) # remove first 3 rows (gene symbol, gene id, cytoband)
+list <- as.data.frame(rep("CNV", times = 548)) # add new column - confirm each ID has CNV data
+id <- cbind(id, list) # add column to id list 
+colnames(id) <- c("aliquot_id", "CNV") # rename columns
+as_tibble(id)
+
+## Merging df's and filtering
+aliquot_filter <- aliquot[,1:3]  # new df, aliquot file columns: aliquot_id, aliquot_submitter_id, case_id
+as_tibble(aliquot_filter)  # df: aliquot_id, aliquot_submitter_id, and case_id
+
+clin_aliquot <- join(aliquot_filter, clinical, type = "left", match = "all") # join by case_id - merging aliquot and clinical files
+as_tibble(clin_aliquot)
+
+filter_clin_aliquot <- join(id, clin_aliquot, type = "left", match = "all") # join by aliquot_id - merging ID's from CNV file and clinical
+as_tibble(filter_clin_aliquot)
+
+## filter for serous only
+serous_CNV <- filter_clin_aliquot %>% filter(primary_diagnosis == "Papillary serous cystadenocarcinoma" | primary_diagnosis == "Serous cystadenocarcinoma, NOS" | primary_diagnosis == "Serous surface papillary carcinoma")
+### NOTE: "submitter_id" column is the TCGA patient identifier number
+
+serous_CNV$aliquot_id <- as.character(serous_CNV$aliquot_id) # force aliquot_id's to character strings
+serous_CNV$submitter_id <- as.character(serous_CNV$submitter_id) # force submtter_id's to character strings
+as_tibble(serous_CNV)  # serous samples meta deta
+
+
+## Create ID "key" dataframe to convert aliquot ID's (long numbers) to their appropriate TCGA patient numbers (submitter_id)
+id_key <- as.data.frame(cbind(serous_CNV$aliquot_id, serous_CNV$submitter_id)) # new df with only aliquot id's and submitter id's
+colnames(id_key) <- c("aliquot_id", "submitter_id")
+as_tibble(id_key)
+```
+
+
+#### Filtering CNV file for serous only and CCNE1 (gene of interest)
+```{r}
+filtered_IDs <- c(serous_CNV$aliquot_id) # create list of serous sample ID's
+#filtered_IDs
+
+genes <- as.data.frame(CNV[,1:3]) # take first three columns from CNV df (gene symbol, gene id, cytoband)
+#genes
+
+filtered_CNV <- CNV[ ,colnames(CNV) %in% filtered_IDs]  # remove columns that don't match the id's from only serous samples
+filtered_CNV <- as.data.frame(cbind(genes, filtered_CNV)) # add gene info to filtered columns 
+as_tibble(filtered_CNV)
+
+### CCNE1 ensembl ID: ENSG00000105173.12
+
+colnames(filtered_CNV)[1] <- "gene.symbol"
+ccne1 <- filtered_CNV[grep("ENSG00000105173.12", filtered_CNV$gene.symbol),] # filter CNV data to only display CCNE1 copy number row
+ccne1
+ccne1 <- ccne1[,-(1:3)] # remove first 3 cols (gene.symbol, gene-id, and cytoband)
+ccne1 <- as.data.frame(t(ccne1)) # transpose data matrix, sample ID's now row names and one column with CCNE1 copy number data
+ccne1 <- setDT(ccne1, keep.rownames = TRUE)[]  # make row names a column
+colnames(ccne1) <- c("aliquot_id", "CCNE1_CNV") # rename column names
+ccne1$CCNE1_CNV <- as.numeric(as.character(ccne1$CCNE1_CNV)) # make CCNE1 copy number numeric
+as_tibble(ccne1)
+plyr::count(ccne1$CCNE1_CNV) # count how many samples have CCNE1 amp
+### NOTE: 1 = Amp, 0 = Non_amp, and -1 = Deletion --> removing "deletion" samples
+### Amplified (1): 57 samples
+### Non_Amplified (0): 84 samples
+### Deletion (-1): 2 samples
+
+
+#grep("19q12", filtered_CNV$cytoband) # [1] 16879 16880 16881 16882 16883 16884 16885 16886 16887
+#filtered_CNV[c(16879:16887),]
+
+
+### get all gene amplifications on 19q12 arm
+chr19q12 <- filtered_CNV[grep("19q12", filtered_CNV$cytoband),] 
+chr19q12 <- chr19q12[,-c(1:3)]
+chr19q12_t <- data.frame(t(chr19q12))
+chr19q12_t$sums <- rowSums(chr19q12_t)
+chr19q12_t <- setDT(chr19q12_t, keep.rownames = TRUE)[]  # make row names a column
+chr19q12_t <- chr19q12_t[, -c(2:10)]
+colnames(chr19q12_t) <- c("aliquot_id", "Chr19q12")
+chr19q12_t$Chr19q12 <- as.numeric(as.character(chr19q12_t$Chr19q12)) 
+as_tibble(chr19q12_t)
+plyr::count(chr19q12_t$Chr19q12)
+# if -9 (del) -> hyper_deletion
+# if -2 (del) -> partial_deletion
+# if 0 amp -> cn_normal (copy number normal)
+# if 1 <= x <= 4 amp -> partial_amplification
+# if > 5 -> hyper_amplification
+
+cnv_serous <- join(ccne1, chr19q12_t, type="left")
+cnv_serous
+
+### using id_key to make final CCNE1 serous copy number df
+CCNE1_serous <- join(id_key, cnv_serous, type = "left") # joining by aliquot_id
+CCNE1_serous[CCNE1_serous[, "CCNE1_CNV"] == -1,] # find TCGA #'s of deletions: TCGA-AJ-A3IA and TCGA-PG-A7D5
+CCNE1_serous <- CCNE1_serous %>% filter(CCNE1_CNV >=0) # remove copy number deletions
+#count(CCNE1_serous$CCNE1_CNV) # confirm deletions were removed
+CCNE1_serous$aliquot_id <- as.character(CCNE1_serous$aliquot_id)
+CCNE1_serous$submitter_id <- as.character(CCNE1_serous$submitter_id)
+
+as_tibble(CCNE1_serous) ## CCNE1 copy number for all serous samples
+plyr::count(CCNE1_serous$Chr19q12)
+
+
+### save chrom info
+CCNE1_serous_chr19 <- data.frame(TCGA_ID = CCNE1_serous$submitter_id, 
+                                 CCNE1_CNV = CCNE1_serous$CCNE1_CNV,
+                                 Chr19q12 = CCNE1_serous$Chr19q12)
+CCNE1_serous_chr19$Chr19q12_CN <- ifelse(CCNE1_serous_chr19$Chr19q12 == -2, "partial_deletion", 
+                                         ifelse(CCNE1_serous_chr19$Chr19q12 == 0, "cn_normal",
+                                                ifelse(CCNE1_serous_chr19$Chr19q12 >= 1 & CCNE1_serous_chr19$Chr19q12 <= 6, "partial_amplification",
+                                                       ifelse(CCNE1_serous_chr19$Chr19q12 > 6, "hyper_amplification", NA ))))
+CCNE1_serous_chr19 <- CCNE1_serous_chr19[-c(8,9,5,10,7,12),] #remove duplicates
+CCNE1_serous_chr19
+plyr::count(CCNE1_serous_chr19$Chr19q12_CN)
+
+write.table(CCNE1_serous_chr19, file = "cnv_serous_chr19.txt", sep = "\t", col.names = T, row.names = F, quote = F)
+
+#grep("TCGA-PG-A915", CCNE1_serous$submitter_id)
+#CCNE1_serous[98,]
+
+
+
+# get Sox2 and Calb1 CNV
+### SOX2 ENSG00000181449
+### CALB1 ENSG00000104327 
+sox2_cnv <- filtered_CNV[grep("ENSG00000181449", filtered_CNV$gene.symbol),]  # find sox2
+calb1_cnv <- filtered_CNV[grep("ENSG00000104327", filtered_CNV$gene.symbol),] # find calb1
+sox2_calb1_cnv <- rbind(sox2_cnv, calb1_cnv)  # combine
+sox2_calb1_cnv <- sox2_calb1_cnv[,-c(2:3)]
+sox2_calb1_cnv_t <- data.frame(t(sox2_calb1_cnv))
+sox2_calb1_cnv_t <- setDT(sox2_calb1_cnv_t, keep.rownames = TRUE)[] 
+colnames(sox2_calb1_cnv_t) <- c("aliquot_id", "SOX2", "CALB1")
+sox2_calb1_cnv_t <- sox2_calb1_cnv_t[-1,]
+sox2_calb1_cnv_t$SOX2 <- as.numeric(as.character(sox2_calb1_cnv_t$SOX2)) 
+sox2_calb1_cnv_t$CALB1 <- as.numeric(as.character(sox2_calb1_cnv_t$CALB1)) 
+as_tibble(sox2_calb1_cnv_t)
+
+sox2_calb1_cnv_t <- join(id_key, sox2_calb1_cnv_t, type = "left")
+sox2_calb1_cnv_t
+
+```
+
+---
+---
+---
+
+### RNA Seq Data
+  - RNA seq data downloads as folders. Each folder contains a ziped file that hold the counts data per patient. 
+
+```{r}
+### Isolate folder names 
+rna_manifest <- read.table("~/Documents/BMI/_Thesis/data/RNAseq/MANIFEST.txt", sep = "\t", header = TRUE) # read in manifest file, contains folder names 
+rna_manifest <- rna_manifest[-(149:158), ] # remove rows at end with no information
+rna_manifest <- as.data.frame(rna_manifest[, -(2:5)]) # remove all columns except for "id" column (folder names)
+as_tibble(rna_manifest)
+
+# write out text file with list of folder names in the same directory as all the folders
+#write.table(rna_manifest, file = "~/Documents/BMI/_Thesis/data/RNAseq/HTseq-counts/gdc_download_20190319_230615.522149/rna_manifest.txt", sep = "\t", col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+sample <- read.table("~/Documents/BMI/_Thesis/data/RNAseq/gdc_sample_sheet.2019-03-19.tsv", "\t", header = TRUE)
+as_tibble(sample)
+plyr::count(sample$Sample.Type) # found 4 samples with "Solid Tissue Normal" - need to remove
+remove <- sample %>% filter(sample$Sample.Type == "Solid Tissue Normal") # find samples that need to be removed 
+### NOTE: take out solid normal tissue samples from the RNA-seq folder: 144f72b9-3d79-4619-826c-1c79d3b9108f, 6dff219f-3120-454b-8434-01e56e326345, f2705d21-5d18-4614-b63d-2fcb6d743a0e, ce6085ab-f374-48ff-b4e4-e53df2041f2d
+as_tibble(remove)
+
+sample <- sample %>% filter(sample$Sample.Type == "Primary Tumor") # filter df for only primary tumors
+sample$File.ID <- as.character(sample$File.ID)
+sample$Case.ID <- as.character(sample$Case.ID)
+as_tibble(sample)
+
+id_to_TCGA <- as.data.frame(cbind(sample$File.ID, sample$Case.ID)) # create conversion for folder name ("File.ID") to TCGA # ("Case.ID")
+colnames(id_to_TCGA) <- c("ID", "TCGA")
+as_tibble(id_to_TCGA)
+
+# write to same dir as folders with counts
+#write.table(id_to_TCGA, file = "~/Documents/BMI/_Thesis/data/RNAseq/HTseq-counts/gdc_download_20190319_230615.522149/id_to_TCGA.txt", sep = "\t", col.names = F, row.names = F, quote = F) 
+
+```
+
+
+#### Text manipulation bash script (command line)
+Unzipping all files in each folder, add TCGA patient number to each file, move all files to one folder
+```{bash, eval = FALSE} 
+#!/bin/bash
+
+### 1. open terminal
+### 2. go to directory with all data folders, manifest.txt, and id_to_tcga.txt
+### 3. run this entire script in this directory or run line by line using command line
+
+
+### unzip all counts files
+cat rna_manifest.txt | while read line; do  # read txt file with all folder names
+	cd $line   # enter dir from manifest list
+	pwd        # print working directory (check if in right one)
+	gunzip -k *.gz  # unzip folder
+	cd ..      # go back one dir (where all the folders are)
+done
+
+
+### add header to counts files
+cat id_to_TCGA.txt | while read line ; do   # read txt file with folder names and conversions to TCGA#s 
+	cd $line   # enter dir (first column of file, folder name)
+	pwd        # check directory
+	echo -e "Gene_Id\t$line" | cat - *.htseq.counts > /tmp/out && mv /tmp/out *.htseq.counts    # add header to file (GeneID folder# TCGA#)
+	cp *htseq.counts /Users/lizabethkatsnelson/Documents/BMI/_Thesis/data/RNAseq/HTseq-counts/gdc_download_20190319_230615.522149/HTseq_counts_allfiles/  # copy the file over to new dir (all together)
+	cd ..  # go back one dir
+done
+
+
+### removing long id from second position in header - keeping GeneID and TCGA# as header
+file='*.htseq.counts'  	# all files with .htseq.counts ending
+for f in $file; do      # loop through files
+	line=$(head -1 $f)  # grab header (GeneID folder# TCGA#)
+	y=$(echo $line | awk '{print $1, $3}')  # variable y = new header (GeneID TCGA#)
+	echo $y     							# print y (to check)
+	echo -e "$y" | cat - $f > /tmp/out && mv /tmp/out $f   # add new header, overwrite file
+	sed '2d' $f > /tmp/out && mv /tmp/out $f  # take out old header (which is now the second line)
+done
+```
+
+
+#### FIND DUPLICATED TCGA NUMBERS
+```{r}
+dup <- as.data.frame(duplicated(id_to_TCGA$TCGA)) # create list of True or False if there are duplicates in the TCGA numbers
+dup$ID <- seq.int(nrow(dup)) # set index for each True or False
+dup[,1] <- as.factor(dup[,1]) # force True or False into factors
+dup <- dup %>% filter(dup[,1] == "TRUE") # filter for only True responses, find indexes of duplicates
+as_tibble(dup)
+
+### duplicates: 35, 45, 68, 104, 126, 142
+id_to_TCGA[(35),] # TCGA-BK-A0CA
+id_to_TCGA[(45),] # TCGA-BK-A0CC
+id_to_TCGA[(68),] # TCGA-BK-A0CC
+id_to_TCGA[(104),] # TCGA-BK-A26L
+id_to_TCGA[(126),] # TCGA-BK-A0CA
+id_to_TCGA[(142),] # TCGA-BK-A26L
+
+grep("TCGA-BK-A0CA", id_to_TCGA$TCGA) # 22, 35, 126
+grep("TCGA-BK-A0CC", id_to_TCGA$TCGA) # 21, 45, 68
+grep("TCGA-BK-A26L", id_to_TCGA$TCGA) # 75, 104, 142
+
+id_to_TCGA[(22),]  #TCGA-BK-A0CA, 23d35e25-dd00-4262-9dab-1cc4c0cf754e
+id_to_TCGA[(35),]  #TCGA-BK-A0CA, 5db821d4-86d4-4e87-bf41-458731ee3441
+id_to_TCGA[(126),] #TCGA-BK-A0CA, 84263d19-6f59-48f5-b2e0-0393b162381b
+
+id_to_TCGA[(21),]  #TCGA-BK-A0CC, 989231f0-c8bb-4b02-984c-a6a45a20d7a5 
+id_to_TCGA[(45),]  #TCGA-BK-A0CC, 7f1701a9-236b-4e10-856e-d47bfe838a29
+id_to_TCGA[(68),]  #TCGA-BK-A0CC, 123aef3a-3347-4da5-8f46-0976cd661ba9
+
+id_to_TCGA[(75),]  #TCGA-BK-A26L, 83ba9807-f7b9-41bc-8db1-7ddb5cd48904
+id_to_TCGA[(104),] #TCGA-BK-A26L, da49c5d3-27f4-408e-aced-b350aa7c60c0
+id_to_TCGA[(142),] #TCGA-BK-A26L, 41cc0f47-726c-45c9-984a-f0deffcd03c9
+
+# Find duplicates in CNV dataframe
+
+CCNE1_serous[CCNE1_serous[, "submitter_id"] == "TCGA-BK-A0CA",] # find duplicates of TCGA-BK-A0CA, rows 8, 9, 17
+# 8	b4e3a69e-a888-44bf-8223-e526e05e76cc	TCGA-BK-A0CA   0
+# 9	e488e03b-31e3-4e7f-87a4-6e30612add04	TCGA-BK-A0CA   0  - remove
+# 17	b938fd48-bdf6-4924-a85e-aac80a7b3af8	TCGA-BK-A0CA 0  - remove
+
+CCNE1_serous[CCNE1_serous[, "submitter_id"] == "TCGA-BK-A0CC",] # find duplicates of TCGA-BK-A0CC, rows 5, 10, 11
+### NOTE: TCGA-BK-A0CC row 5 had no CCNE1 amplification, while rows 10 and 11 showed CCNE1 amplification - will choose an amplified row
+# 5	60db069d-225d-4113-9ee2-9843e71e7fe0	TCGA-BK-A0CC   0  - remove
+# 10	bb8680b9-5753-4ee4-8260-e9373fd4aaa7	TCGA-BK-A0CC 1  - remove
+# 11	7a52efc5-0d32-4147-a2a0-67576bb190b7	TCGA-BK-A0CC 1
+
+CCNE1_serous[CCNE1_serous[, "submitter_id"] == "TCGA-BK-A26L",] # # find duplicates of TCGA-BK-A26L, rows 7, 12, 139
+# 7	0a3da6e7-e5dd-4016-8637-987111d86c7c	TCGA-BK-A26L   0
+# 12	834f93d8-3dc3-4f3f-b0ff-3a39d874ddbe	TCGA-BK-A26L 0  - remove
+# 139	1cf1c682-d68f-459c-ae71-925766e0e9c5	TCGA-BK-A26L 0  - remove
+
+CCNE1_serous <- CCNE1_serous[-c(5, 9, 10, 12, 17, 139 ),] # remove duplicates, keeping one from each
+
+as_tibble(CCNE1_serous) # 135 patients in final df
+plyr::count(CCNE1_serous$CCNE1_CNV) # check how many per copy number group: 79 non-amp, 56 amplified
+```
+
+
+#### Concat RNA seq counts files into one dataset
+```{r, warning=F, results='hide', message=FALSE}
+# read in each file in file_list and join to df
+
+setwd("~/Documents/BMI/_Thesis/data/RNAseq/HTseq-counts/HTseq_counts_allfiles/") # set working dir to where all patient counts files are
+file_list <- list.files() # create list of all files in dir
+
+for (file in file_list){
+       
+  # if the merged dataset doesn't exist, create it
+  if (!exists("rna_counts")){
+    rna_counts <- read.table(file, header=TRUE, row.names=NULL) # new matrix, starts off with first patient
+  }
+   
+  # if the merged dataset does exist, append to it (will exist after first iteration)
+  if (exists("rna_counts")){
+    temp_dataset <-read.table(file, header=TRUE, row.names=NULL) # temp df for next patient
+    rna_counts <- join(rna_counts, temp_dataset, type="left") # join new patient to existing matrix 
+    rm(temp_dataset) # remove the temp df
+  }
+}
+```
+
+```{r}
+# view rna matrix
+as_tibble(rna_counts)
+
+as_tibble(tail(rna_counts))  ### "no feature", "ambiguous", "too_low_aQual", "not_aligned", "alignment_not_unique"
+rna_counts_filt <- rna_counts[-(60484:60488),] ### remove tail
+colnames(rna_counts_filt) <- gsub(x = colnames(rna_counts_filt), pattern = "\\.", replacement = "\\-")  # change periods into hyphens 
+
+### delete CCNE1 deletion TCGA numbers
+rna_counts_filt <-  rna_counts_filt[ , -which(names(rna_counts_filt) %in% c("TCGA-AJ-A3IA","TCGA-PG-A7D5"))] # remove CCNE1 deletion samples
+
+### delete duplicated TCGA numbers
+### NOTE: manually manipulated duplicated TCGA #'s in text file (added _2 and _3 to duplictes)
+rna_counts_filt <-  rna_counts_filt[ , -which(names(rna_counts_filt) %in% c("TCGA-BK-A0CA_2","TCGA-BK-A0CA_3",
+                                                                            "TCGA-BK-A0CC_2","TCGA-BK-A0CC_3", 
+                                                                            "TCGA-BK-A26L_2","TCGA-BK-A26L_3"))]
+as_tibble(rna_counts_filt)
+```
+
+
+
+```{r}
+### check if rna and cna match
+rna_id_num <- as.data.frame(colnames(rna_counts_filt)) # get all column names from rna matrix (sample IDs)
+rna_id_num <- as.data.frame(rna_id_num[-1,]) # remove "Gene_ID" 
+colnames(rna_id_num) <- "submitter_id" # column name submitter_id (TCGA#) to match CNV data
+rna_id_num$rna_seq <- c(rep("yes")) # add new column, "yes" for having RNA seq data
+as_tibble(rna_id_num)
+as_tibble(CCNE1_serous)
+
+check <- join(rna_id_num, CCNE1_serous, type = "left") # check if RNA and CNV matrices align, NA is generated 
+### NOTE: TCGA-A5-A0G3 missing CNV data - remove this sample
+check <- na.omit(check)
+as_tibble(check) 
+
+### NOTE: final sample count: 135 patients (RNA and copy number data)
+
+
+grep("TCGA-A5-A0G3", colnames(rna_counts_filt)) ### find TCGA sample that needs to be removed from counts matrix - column 109
+#rna_counts_filt[,108:110] ### check TCGA-A5-A0G3 is column 109
+
+final_rna_counts_matrix <- rna_counts_filt[,-109]
+as_tibble(final_rna_counts_matrix)
+
+# save RNA matrix 
+#write.table(final_rna_counts_matrix, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/rna_counts_matrix.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+
+```
+
+```{r}
+### Final Sample Sheet (groups)
+rna_sample_groups <- as.data.frame(check)
+rna_sample_groups <- rna_sample_groups[,-3]  #remove aliquot id
+rna_sample_groups$CCNE1_group <- ifelse(rna_sample_groups$CCNE1_CNV >0, "Amplified", "Non-Amplified") # add column for CCNE1 amp or non amp groups
+as_tibble(rna_sample_groups)
+plyr::count(rna_sample_groups$CCNE1_group) # 56 amplified, 79 non amplified
+
+## CREATE FINAL SAMPLE SHEET - separates groups (amplified vs non amplified)
+### use for rna seq and methylation
+sample_groups <- rna_sample_groups[,-(2:3)]
+sample_groups$CCNE1_group <- as.factor(sample_groups$CCNE1_group)
+colnames(sample_groups) <- c("TCGA_ID", "CCNE1_Group")
+as_tibble(sample_groups)
+
+# save sample sheet
+#write.table(sample_groups, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/rna_sample_groups.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+
+```
+
+
+
+```{r}
+### Final meta data for serous and CCNE1 copy number variation samples (filtered to match RNA seq samples)
+
+as_tibble(serous_CNV) # meta data
+as_tibble(CCNE1_serous) ### filtered, removed duplicates, contains CNV column
+CCNE1_serous_ <- CCNE1_serous[,-2] # remove submitter id
+as_tibble(CCNE1_serous_)
+
+serous_CCNE1_meta <- join(CCNE1_serous_, serous_CNV, type="left", by="aliquot_id")
+as_tibble(serous_CCNE1_meta)
+plyr::count(serous_CCNE1_meta$CCNE1_CNV) # check how many per CNV group
+
+# filter meta data
+serous_CCNE1_meta_filtered <- data.frame(submitter_id = serous_CCNE1_meta$submitter_id,
+                                CCNE1_CNV = serous_CCNE1_meta$CCNE1_CNV,
+                                year_of_birth = serous_CCNE1_meta$year_of_birth,
+                                race = serous_CCNE1_meta$race,
+                                ethnicity = serous_CCNE1_meta$ethnicity,
+                                year_of_death = serous_CCNE1_meta$year_of_death,
+                                age_at_diagnosis = serous_CCNE1_meta$age_at_diagnosis,
+                                vital_status = serous_CCNE1_meta$vital_status,
+                                morphology = serous_CCNE1_meta$morphology,
+                                days_to_death = serous_CCNE1_meta$days_to_death,
+                                days_to_birth = serous_CCNE1_meta$days_to_birth,
+                                days_to_last_follow_up = serous_CCNE1_meta$days_to_last_follow_up)
+
+as_tibble(serous_CCNE1_meta_filtered)
+
+# save meta data
+#write.table(serous_CCNE1_meta_filtered, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/serous_CCNE1_meta.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+
+```
+
+---
+---
+---
+
+### Methylation
+  - Downloads same as RNA seq (each patient is a folder with beta matrix file)
+
+```{r}
+meta <- read.table("serous_CCNE1_meta.txt", sep="\t", header=T)
+as_tibble(meta)
+
+groups <- read.table("rna_sample_groups.txt", sep = "\t", header=T)
+groups$TCGA_ID <- as.character(groups$TCGA_ID)
+as_tibble(groups)
+```
+
+
+#### GDC Methylation download
+```{r}
+# read in sample sheet
+meth_sample_sheet <- read.table("~/Documents/BMI/_Thesis/data/Methylation/gdc_sample_sheet.2019-04-03.tsv", sep="\t", header=T)
+meth_sample_sheet <- meth_sample_sheet[order(meth_sample_sheet$Case.ID),] # order by case id (TCGA number)
+as_tibble(meth_sample_sheet)
+```
+
+#### NOTE: 
+Manually removed folders with with CCNE1 deletions: TCGA-AJ-A3IA and TCGA-PG-A7D5. The folders still contain the duplicated samples, this will be removed in text manipulation bash script
+
+#### NOTE: 
+Methylation text files in each folder are named with TCGA numbers in the file name, but manually removed other characters in filenames to have just the TCGA number as the file name.
+
+#### Text manipulation bash script (command line)
+Unzipping all files in each folder, add TCGA patient number to each file, move all files to one folder
+
+```{bash, eval = FALSE} 
+
+### 1. open terminal
+### 2. go to directory with all data folders
+
+ls -d * > folder_names.txt  # get list of all folders in directory
+
+### 3. run script in directory with all folders and text file
+## duplicates removed here when added to folder with all files (will overwrite file if same name)
+cat folder_names.txt | while read line; do  # read txt file with all folder names, line is a variable for each folder name
+	cd $line   # enter dir from folder list
+	pwd        # print working directory (check if in right one)
+	cp *.txt /Users/lizabethkatsnelson/Documents/BMI/_Thesis/data/Methylation/methylation_all_files/ # copy text file into folder with all files
+	cd /Users/lizabethkatsnelson/Documents/BMI/_Thesis/data/Methylation/gdc_download_20190403_171302.315864/ # go to dir with all folders
+done
+```
+
+
+#### NOTE: 
+There are two types of arrays for methylation data - most are in the "450" (450,000 probes) format and some are in the "27" (27,000 probes) format. Manually sorted files in folder by size (450 are much bigger) and moved large files to separate folder "m450_all_files", moved smaller files to folder "m27_all_files". 
+
+#### NOTE: 
+Removed "TCGA-A5-A0G3.txt" from m27_all_files folder because it is the sample that does not have copy number data
+
+
+```{r}
+### TEST
+#m1 <- read.table("~/Documents/BMI/_Thesis/data/Methylation/m27_all_files/TCGA-A5-A0G2.txt", sep="\t", header=T) # read df
+#head(m1)
+
+#m <- m1[,-(3:11)]  # remove columns 3:11
+#head(m)
+#colnames(m)[2] <- ("TCGA-A5-A0G2.txt") # make beta value column name the text file name
+#colnames(m)[2] <- gsub("\\..*", "", (colnames(m)[2])) # remove the .txt from colname
+#head(m)
+
+
+```
+
+
+#### Concat all m450 files into one beta values matrix
+```{r, warning=F, results='hide', message=FALSE}
+# 1. open file as dataframe
+# 2. remove columns 3:11
+# 3. change second column name to file name
+# 4. join to full df
+
+### combining all "hm 450" files  - methylation array 450
+setwd("~/Documents/BMI/_Thesis/data/Methylation/methylation_all_files/m450_all_files/")  # set dir to where all m450 files are
+file_list <- list.files() # create list of all files
+
+for (file in file_list){
+       
+  # if the merged dataset doesn't exist, create it
+  if (!exists("meth450_df")){
+    meth450_df <- read.table(file, sep="\t", header=TRUE, row.names=NULL)
+    meth450_df <- meth450_df[,-(3:11)]  # remove columns 3:11
+    colnames(meth450_df)[2] <- (file) # make beta value column name the text file name
+    colnames(meth450_df)[2] <- gsub("\\..*", "", (colnames(meth450_df)[2])) # remove the .txt from colname
+  }
+   
+  # if the merged dataset does exist, append to it
+  if (exists("meth450_df")){
+    temp_dataset <-read.table(file, sep="\t", header=TRUE, row.names=NULL)
+    temp_dataset <- temp_dataset[,-(3:11)]  # remove columns 3:11
+    colnames(temp_dataset)[2] <- (file) # make beta value column name the text file name
+    colnames(temp_dataset)[2] <- gsub("\\..*", "", (colnames(temp_dataset)[2])) # remove the .txt from colname
+    meth450_df <- join(meth450_df, temp_dataset, type="left")
+    rm(temp_dataset)
+  }
+ 
+}
+
+```
+
+```{r}
+# view matrix
+#meth450_df <- na.omit(meth450_df) # rm na's from final df
+as_tibble(meth450_df) # final methylation hm450 df
+
+# save beta values matrix
+write.table(meth450_df, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/tcga_hm450.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+
+```
+
+
+#### Concat all m27 files into one beta values matrix
+```{r, warning=F, results='hide', message=FALSE}
+### combining all "hm 27" files - methylation array 27 
+
+setwd("~/Documents/BMI/_Thesis/data/Methylation/methylation_all_files/m27_all_files/") # set dir to where all m27 files are
+file_list <- list.files() # create list of all files
+
+for (file in file_list){
+       
+  # if the merged dataset doesn't exist, create it
+  if (!exists("meth27_df")){
+    meth27_df <- read.table(file, sep="\t", header=TRUE, row.names=NULL)
+    meth27_df <- meth27_df[,-(3:11)]  # remove columns 3:11
+    colnames(meth27_df)[2] <- (file) # make beta value column name the text file name
+    colnames(meth27_df)[2] <- gsub("\\..*", "", (colnames(meth27_df)[2])) # remove the .txt from colname
+  }
+   
+  # if the merged dataset does exist, append to it
+  if (exists("meth27_df")){
+    temp_dataset <-read.table(file, sep="\t", header=TRUE, row.names=NULL)
+    temp_dataset <- temp_dataset[,-(3:11)]  # remove columns 3:11
+    colnames(temp_dataset)[2] <- (file) # make beta value column name the text file name
+    colnames(temp_dataset)[2] <- gsub("\\..*", "", (colnames(temp_dataset)[2])) # remove the .txt from colname
+    meth27_df <- join(meth27_df, temp_dataset, type="left")
+    rm(temp_dataset)
+  }
+ 
+}
+
+```
+
+```{r}
+# view matrix
+
+meth27_df <- na.omit(meth27_df) # rm na's from full df 
+as_tibble(meth27_df) # final methylation hm27 df
+
+# save beta matrix 
+#write.table(meth27_df, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/tcga_hm27.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+
+```
+
+
+---
+---
+---
+
+### Mutation Data - Open data (somatic)
+#### NOTE: opened maf files in textedit first - manually added quotes to all 3'UTR, 3'Flank, 5'UTR, and 5'Flank  (using control find) to look like "3'UTR", "3'Flank", "5'UTR", and "5'Flank" - the files were not reading in properly if there was a ' character in the rows
+
+#### Varscan2
+```{r}
+### read in maf as table
+somatic_mut_varscan <- read.table("~/Documents/BMI/_Thesis/data/Mutation/gdc_download_20190517_134135.467327/somatic/9e8b5426-159b-45d9-8579-ec03f6ffb74f/TCGA.UCEC.varscan.9e8b5426-159b-45d9-8579-ec03f6ffb74f.DR-10.0.somatic.maf", sep='\t', header=T)
+as_tibble(somatic_mut_varscan)
+
+### read in meta data
+clinical <- read.table("~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/serous_CCNE1_meta.txt", sep='\t', header=T) 
+colnames(clinical)[1] <- "Tumor_Sample_Barcode" # change TCGA IDs column name to match maf file
+as_tibble(clinical)
+
+### get rid of extra numbers in TCGA IDs
+as_tibble(somatic_mut_varscan$Tumor_Sample_Barcode) # view TCGA number column
+somatic_mut_varscan$Tumor_Sample_Barcode <- substr(somatic_mut_varscan$Tumor_Sample_Barcode, 1, 12) # keep first 12 characters 
+
+unique_ids <- unique(somatic_mut_varscan$Tumor_Sample_Barcode) # find how many ID's present - 529
+as_tibble(unique_ids)
+
+
+### filter for only serous samples
+filtered_somatic_mut_varscan <- somatic_mut_varscan[ somatic_mut_varscan$Tumor_Sample_Barcode %in% clinical$Tumor_Sample_Barcode, ] # keep IDs only serous - same as samples from CNV and RNA-seq data frames
+as_tibble(filtered_somatic_mut_varscan) # new df - filtered 
+
+
+# find how many ID's present after filtering - 132 (missing 3?)
+unique_ids_filt <- data.frame(Tumor_Sample_Barcode = unique(filtered_somatic_mut_varscan$Tumor_Sample_Barcode), Varscan = rep("varscan")) 
+as_tibble(unique_ids_filt)
+
+# find missing samples - will have "na" for varscan column
+missing_test <- join(clinical, unique_ids_filt,type="left")
+as_tibble(missing_test) # rows 35, 90, 115 
+missing_samples <- missing_test %>% filter(is.na(Varscan))
+missing_samples
+
+#### samples missing from varscan open data: TCGA-AP-A3K1, TCGA-D1-A179, TCGA-AJ-A3NH
+
+
+### check which colnames are in maf matrix - match to maftools example
+colnames(somatic_mut_varscan)
+
+### colnames from maftools example (Bioconductor package MAFTOOLS)
+# c("Hugo_Symbol",	"Entrez_Gene_Id",	"Center",	"NCBI_Build",	"Chromosome",	"Start_Position",	"End_Position",	"Strand", "Variant_Classification",	"Variant_Type",	"Reference_Allele",	"Tumor_Seq_Allele1",	"Tumor_Seq_Allele2",	"Tumor_Sample_Barcode",	"Protein_Change",	"i_TumorVAF_WU",	"i_transcript_name")
+
+### missing colnames from gdc download  
+# Protein_Change = HGVSp_Short
+# i_TumorVAF_WU = *** no equivalent
+# i_transcript_name = RefSeq
+
+
+### get rid of unwanted columns in filtered maf df - filter for ones we want to keep
+filtered_somatic_mut_varscan <- filtered_somatic_mut_varscan[, c("Hugo_Symbol",	"Entrez_Gene_Id",	"Center",	"NCBI_Build",	"Chromosome",	"Start_Position",	"End_Position",	"Strand", "Variant_Classification",	"Variant_Type",	"Reference_Allele",	"Tumor_Seq_Allele1",	"Tumor_Seq_Allele2",	"Tumor_Sample_Barcode", "Mutation_Status",	"HGVSp_Short",	"RefSeq", "Gene", "Feature")]
+
+# change colnames to match maftools
+colnames(filtered_somatic_mut_varscan)[16] <- "Protein_Change"
+colnames(filtered_somatic_mut_varscan)[17] <- "i_transcript_name"
+as_tibble(filtered_somatic_mut_varscan)
+
+plyr::count(filtered_somatic_mut_varscan$Variant_Classification) # see what types of mutations occured
+
+# write out filtered matrix
+#write.table(filtered_somatic_mut_varscan, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/somatic_mut_varscan_filt.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+
+```
+
+
+
+#### Mutect
+```{r}
+### read in maf as table
+somatic_mut_mutect <- read.table("~/Documents/BMI/_Thesis/data/Mutation/gdc_download_20190517_134135.467327/somatic/d3fa70be-520a-420e-bb6d-651aeee5cb50/TCGA.UCEC.mutect.d3fa70be-520a-420e-bb6d-651aeee5cb50.DR-10.0.somatic.maf", sep='\t', header=T)
+as_tibble(somatic_mut_mutect)
+
+as_tibble(somatic_mut_mutect$Tumor_Sample_Barcode) # view TCGA number column
+somatic_mut_mutect$Tumor_Sample_Barcode <- substr(somatic_mut_mutect$Tumor_Sample_Barcode, 1, 12) # keep first 12 characters 
+
+unique_ids <- unique(somatic_mut_mutect$Tumor_Sample_Barcode) # find how many ID's present
+as_tibble(unique_ids)
+
+### filter for only serous samples
+filtered_somatic_mut_mutect <- somatic_mut_mutect[ somatic_mut_mutect$Tumor_Sample_Barcode %in% clinical$Tumor_Sample_Barcode, ] # keep IDs only serous - same as samples from CNV and RNA-seq data frames
+as_tibble(filtered_somatic_mut_mutect) # new df - filtered 
+
+
+# find how many ID's present after filtering - 132 (missing 3?)
+unique_ids_filt <- data.frame(Tumor_Sample_Barcode = unique(filtered_somatic_mut_mutect$Tumor_Sample_Barcode), Mutect = rep("mutect")) 
+as_tibble(unique_ids_filt)
+
+# find missing samples - will have "na" for varscan column
+missing_test <- join(clinical, unique_ids_filt,type="left")
+as_tibble(missing_test) 
+missing_samples <- missing_test %>% filter(is.na(Mutect))
+missing_samples
+#### samples missing from mutect open data (same as above): TCGA-AP-A3K1, TCGA-D1-A179, TCGA-AJ-A3NH
+
+
+
+colnames(somatic_mut_mutect)
+
+
+### get rid of unwanted columns in filtered maf df - filter for ones we want to keep
+filtered_somatic_mut_mutect <- filtered_somatic_mut_mutect[, c("Hugo_Symbol",	"Entrez_Gene_Id",	"Center",	"NCBI_Build",	"Chromosome",	"Start_Position",	"End_Position",	"Strand", "Variant_Classification",	"Variant_Type",	"Reference_Allele",	"Tumor_Seq_Allele1",	"Tumor_Seq_Allele2",	"Tumor_Sample_Barcode", "Mutation_Status",	"HGVSp_Short",	"RefSeq", "Gene", "Feature")]
+
+# change colnames to match maftools
+colnames(filtered_somatic_mut_mutect)[16] <- "Protein_Change"
+colnames(filtered_somatic_mut_mutect)[17] <- "i_transcript_name"
+as_tibble(filtered_somatic_mut_mutect)
+
+plyr::count(filtered_somatic_mut_mutect$Variant_Classification) # see what types of mutations occured
+
+# write out filtered matrix
+write.table(filtered_somatic_mut_mutect, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/somatic_mut_mutect_filt.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+```
+
+
+
+
+#### Muse
+```{r}
+### read in maf as table
+somatic_mut_muse <- read.table("~/Documents/BMI/_Thesis/data/Mutation/gdc_download_20190517_134135.467327/somatic/d12371d7-18ff-4105-a4a0-59de52b82805/TCGA.UCEC.muse.d12371d7-18ff-4105-a4a0-59de52b82805.DR-10.0.somatic.maf", sep='\t', header=T)
+as_tibble(somatic_mut_muse)
+
+as_tibble(somatic_mut_muse$Tumor_Sample_Barcode) # view TCGA number column
+somatic_mut_muse$Tumor_Sample_Barcode <- substr(somatic_mut_muse$Tumor_Sample_Barcode, 1, 12) # keep first 12 characters 
+
+unique_ids <- unique(somatic_mut_muse$Tumor_Sample_Barcode) # find how many ID's present
+as_tibble(unique_ids)
+
+### filter for only serous samples
+filtered_somatic_mut_muse <- somatic_mut_muse[ somatic_mut_muse$Tumor_Sample_Barcode %in% clinical$Tumor_Sample_Barcode, ] # keep IDs only serous - same as samples from CNV and RNA-seq data frames
+as_tibble(filtered_somatic_mut_muse) # new df - filtered 
+
+
+
+# find how many ID's present after filtering - 132 (missing 3?)
+unique_ids_filt <- data.frame(Tumor_Sample_Barcode = unique(filtered_somatic_mut_muse$Tumor_Sample_Barcode), Muse = rep("muse")) 
+as_tibble(unique_ids_filt)
+
+# find missing samples - will have "na" for varscan column
+missing_test <- join(clinical, unique_ids_filt,type="left")
+as_tibble(missing_test) 
+missing_samples <- missing_test %>% filter(is.na(Muse))
+missing_samples
+#### samples missing from muse open data (same as above): TCGA-AP-A3K1, TCGA-D1-A179, TCGA-AJ-A3NH
+
+
+
+colnames(somatic_mut_muse)
+
+
+### get rid of unwanted columns in filtered maf df - filter for ones we want to keep
+filtered_somatic_mut_muse <- filtered_somatic_mut_muse[, c("Hugo_Symbol",	"Entrez_Gene_Id",	"Center",	"NCBI_Build",	"Chromosome",	"Start_Position",	"End_Position",	"Strand", "Variant_Classification",	"Variant_Type",	"Reference_Allele",	"Tumor_Seq_Allele1",	"Tumor_Seq_Allele2",	"Tumor_Sample_Barcode", "Mutation_Status",	"HGVSp_Short",	"RefSeq", "Gene", "Feature")]
+
+# change colnames to match maftools
+colnames(filtered_somatic_mut_muse)[16] <- "Protein_Change"
+colnames(filtered_somatic_mut_muse)[17] <- "i_transcript_name"
+as_tibble(filtered_somatic_mut_muse)
+
+plyr::count(filtered_somatic_mut_muse$Variant_Classification) # see what types of mutations occured
+
+# write out filtered matrix
+write.table(filtered_somatic_mut_muse, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/somatic_mut_muse_filt.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+```
+
+
+#### SomaticSniper
+```{r}
+### read in maf as table
+somatic_mut_somatsniper <- read.table("~/Documents/BMI/_Thesis/data/Mutation/gdc_download_20190517_134135.467327/somatic/10721f4e-972c-4a87-bb5a-282b8886d3fb/TCGA.UCEC.somaticsniper.10721f4e-972c-4a87-bb5a-282b8886d3fb.DR-10.0.somatic.maf", sep='\t', header=T)
+as_tibble(somatic_mut_somatsniper)
+
+as_tibble(somatic_mut_somatsniper$Tumor_Sample_Barcode) # view TCGA number column
+somatic_mut_somatsniper$Tumor_Sample_Barcode <- substr(somatic_mut_somatsniper$Tumor_Sample_Barcode, 1, 12) # keep first 12 characters 
+
+unique_ids <- unique(somatic_mut_somatsniper$Tumor_Sample_Barcode) # find how many ID's present
+as_tibble(unique_ids)
+
+
+### filter for only serous samples
+filtered_somatic_mut_somatsniper <- somatic_mut_somatsniper[ somatic_mut_somatsniper$Tumor_Sample_Barcode %in% clinical$Tumor_Sample_Barcode, ] # keep IDs only serous - same as samples from CNV and RNA-seq data frames
+as_tibble(filtered_somatic_mut_somatsniper) # new df - filtered 
+
+
+# find how many ID's present after filtering - 132 (missing 3?)
+unique_ids_filt <- data.frame(Tumor_Sample_Barcode = unique(filtered_somatic_mut_somatsniper$Tumor_Sample_Barcode), SomaticSniper = rep("somatsniper")) 
+as_tibble(unique_ids_filt)
+
+# find missing samples - will have "na" for varscan column
+missing_test <- join(clinical, unique_ids_filt,type="left")
+as_tibble(missing_test) 
+missing_samples <- missing_test %>% filter(is.na(SomaticSniper))
+missing_samples
+#### samples missing from SomaticSniper open data (same as above): TCGA-AP-A3K1, TCGA-D1-A179, TCGA-AJ-A3NH
+
+
+
+colnames(somatic_mut_somatsniper)
+### get rid of unwanted columns in filtered maf df - filter for ones we want to keep
+filtered_somatic_mut_somatsniper <- filtered_somatic_mut_somatsniper[, c("Hugo_Symbol",	"Entrez_Gene_Id",	"Center",	"NCBI_Build",	"Chromosome",	"Start_Position",	"End_Position",	"Strand", "Variant_Classification",	"Variant_Type",	"Reference_Allele",	"Tumor_Seq_Allele1",	"Tumor_Seq_Allele2",	"Tumor_Sample_Barcode", "Mutation_Status",	"HGVSp_Short",	"RefSeq", "Gene", "Feature")]
+
+# change colnames to match maftools
+colnames(filtered_somatic_mut_somatsniper)[16] <- "Protein_Change"
+colnames(filtered_somatic_mut_somatsniper)[17] <- "i_transcript_name"
+as_tibble(filtered_somatic_mut_somatsniper)
+
+plyr::count(filtered_somatic_mut_somatsniper$Variant_Classification) # see what types of mutations occured
+
+# write out filtered matrix
+write.table(filtered_somatic_mut_somatsniper, file = "~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/somatic_mut_somatsniper_filt.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,227 @@
+---
+title: "methylation"
+author: "Lizabeth Katsnelson"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+
+library(minfi)
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(ggplot2)
+#library(tidyr)
+
+#library(IlluminaHumanMethylationEPICmanifest)
+#library(IlluminaHumanMethylationEPICanno.ilm10b2.hg19)
+#library(IlluminaHumanMethylation450kmanifest)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+library(Biobase)
+library(RColorBrewer)
+library(limma)
+library(ggfortify)
+#library(Rtsne)
+library(plotly)
+library(gplots)
+```
+
+
+```{r}
+ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+as_tibble(ann450k)
+
+grep("cg08211853", ann450k$Name)
+
+#R1_sig_genes <- as.data.frame(cbind2(ann450k[match(rownames(R1_deltas_filt),ann450k$Name),c(1:4,24,26)],R1_deltas_filt))
+```
+
+```{r}
+tcga_hm450 <- read.table("tcga_hm450.txt", sep="\t", header=T)
+rownames(tcga_hm450) <- tcga_hm450[,1]
+tcga_hm450 <- tcga_hm450[,-1]
+tcga_hm450
+
+#tcga_hm27 <- read.table("tcga_hm27.txt", sep="\t", header=T)
+#rownames(tcga_hm27) <- tcga_hm27[,1]
+#tcga_hm27 <- tcga_hm27[,-1]
+#tcga_hm27
+
+# read in meta
+pd <- read.table("filtered_true_serous.tsv", sep='\t', header=T)
+pd <- pd[,-c(3:8)]
+pd$TCGA_ID <- gsub(x = pd$TCGA_ID, pattern = "\\-", replacement = "\\.")
+pd
+
+#filter 450 array for proper samples
+tcga_hm450_filt <- tcga_hm450[, colnames(tcga_hm450) %in% c(pd$TCGA_ID)]
+tcga_hm450_filt
+
+# remove any samples from meta data that aren't in the hm450 array
+pd_hm450 <- pd[ pd$TCGA_ID %in% c(colnames(tcga_hm450_filt)), ]
+pd_hm450
+
+
+# rearrange beta matrix to match meta 
+tcga_hm450_filt <- tcga_hm450_filt[c(pd_hm450$TCGA_ID)]
+tcga_hm450_filt <- as.matrix(tcga_hm450_filt)
+
+
+colnames(pd_hm450) <- c("Sample_Name", "Sample_Group")
+pd_hm450
+
+
+### test on 8 samples
+# test sample sheet
+#test_pd_hm450 <- pd_hm450[31:38,]
+#test_pd_hm450
+
+# test matrix
+#test_tcga_hm450_filt <- tcga_hm450_filt[, colnames(tcga_hm450_filt) %in% c(test_pd_hm450$Sample_Name)]
+#test_tcga_hm450_filt <- as.matrix(test_tcga_hm450_filt)
+#head(test_tcga_hm450_filt)
+
+
+
+```
+
+
+```{r}
+condition <- as.factor(pd_hm450$Sample_Group)
+
+dmp <- dmpFinder(tcga_hm450_filt, pheno=condition, type="categorical")
+dmp <- cbind(dmp, Name=rownames(dmp))
+dmp
+
+#dmp_annot_combined <- merge(dmp, ann450k, by="Name")
+#as_tibble(dmp_annot_combined)
+
+
+top50_diff_methylation <- data.frame(dmp[1:50,])
+top50_diff_methylation
+
+```
+
+### heatmap
+```{r fig.height=8, fig.width=10}
+
+pal <- c("darkred","dodgerblue2")
+cell_colors = colorRampPalette( c("#010F57", "#010F57", "#FAFAFA", "#B21212", "#B21212") )(50)
+f <- condition
+
+#png(file = "./figures/methylation_dm.png", units="in", width=8, height=8, res=500)
+hm_meth <- heatmap.2(tcga_hm450_filt[row.names(dmp[1:30,]),],trace = 'none', scale = 'row',col = cell_colors, key.xlab = "Methylation Beta", main = "Top 30 Differentially Methylated CpG Sites", ColSideColors = pal[f], keysize = 1,density.info = "none", labCol = F, Colv=FALSE, dendrogram = 'row')
+legend("topright", legend=levels(f), col=pal[factor(levels(f))], pch=15,cex = 0.45)
+hm_meth
+#dev.off()
+
+row_order <- data.frame(hm_meth$rowSDs) # get row order from clustered rows in heatmap
+row_order <- setDT(row_order, keep.rownames = TRUE)[]
+row_order <- row_order %>% map_df(rev) # reverse order (heat map starts at bottom)
+row_order
+```
+
+
+```{r}
+# annotations
+top50_cpg <- data.frame(Name=top50_diff_methylation$Name, pval=top50_diff_methylation$pval)
+top50_cpg
+
+ann450k <- data.frame(ann450k)
+annotation_top50 <- join(top50_cpg, ann450k, type="left")
+annotation_top50 <- annotation_top50[, -c(5:18, 21:24, 28:32, 34)]
+annotation_top50
+
+## get avg beta values per group for each CpG site
+beta_df <- as.data.frame(tcga_hm450_filt)
+beta_top50 <- beta_df[row.names(beta_df) %in%  annotation_top50$Name, ] #filter for top 50 cpg sites
+
+amp_samples <- dplyr::filter(pd_hm450, Sample_Group=="Amplified") # get amplified samples
+amp_samples
+nonamp_samples <- dplyr::filter(pd_hm450, Sample_Group=="Non_Amplified")
+nonamp_samples
+
+beta_top50_amp <- beta_top50[ ,colnames(beta_top50) %in% amp_samples$Sample_Name] # filter for amp samples in beta matrix
+beta_top50_amp$Amplified_Samples_Mean <- rowMeans(beta_top50_amp) # calculate row means per cpg site
+beta_top50_amp$Amplified_Samples_Median <- apply(beta_top50_amp, 1, median) # row medians
+beta_top50_amp <- setDT(beta_top50_amp, keep.rownames = TRUE)[]
+colnames(beta_top50_amp)[1] <- "Name"
+beta_top50_amp <- beta_top50_amp[,-c(2:35)]
+beta_top50_amp
+
+beta_top50_nonamp <- beta_top50[ ,colnames(beta_top50) %in% nonamp_samples$Sample_Name] # filter for nonamp samples in beta matrix
+beta_top50_nonamp$NonAmplified_Samples_Mean <- rowMeans(beta_top50_nonamp)
+beta_top50_nonamp$NonAmplified_Samples_Median <- apply(beta_top50_nonamp, 1, median)
+beta_top50_nonamp <- setDT(beta_top50_nonamp, keep.rownames = TRUE)[]
+colnames(beta_top50_nonamp)[1] <- "Name"
+beta_top50_nonamp <- beta_top50_nonamp[,-c(2:42)]
+beta_top50_nonamp
+
+
+annotation_top50_stats <- join(annotation_top50, beta_top50_amp, type="left") # add means and medians from amp samples
+annotation_top50_stats <- join(annotation_top50_stats, beta_top50_nonamp, type="left") # add means and medians from nonamp samples
+annotation_top50_stats
+
+annotation_top30_stats <- annotation_top50_stats[match(row_order$rn, annotation_top50_stats$Name),] # reorder annotations to match heatmap
+annotation_top30_stats
+
+annotation_top30_stats$UCSC_RefGene_Name <- gsub(x = annotation_top30_stats$UCSC_RefGene_Name, pattern = "\\.;*", replacement = "")
+annotation_top30_stats
+
+#write.table(annotation_top50_means, file = "diff_methylation_top50_annotation.tsv", sep = "\t", col.names = T, row.names = F, quote = F)
+
+```
+
+
+
+```{r fig.height=6, fig.width=10}
+## multiple boxplots loop through a few sites for the top markers (most
+## significantly associated)
+top_sites <- rownames(top50_diff_methylation)[c(1:12)]
+
+
+#png(file = "./figures/methylation_plots.png", units="in", width=10, height=6, res=500)
+par(mfrow = c(3, 4))
+for (cpg in top_sites) {
+    
+    boxplot(tcga_hm450_filt[cpg, ] ~ condition, col = c("darkred", "cadetblue"), ylab = "methylation (beta)", 
+        xlab = "tissue", main = cpg, ylim = c(0, 1))
+}
+#dev.off()
+```
+
+
+```{r fig.height=6, fig.width=10}
+## multiple boxplots loop through a few sites for the top markers (most
+## significantly associated)
+top_sites <- rownames(top50_diff_methylation)[c(13:24)]
+
+
+#png(file = "./figures/methylation_plots_2.png", units="in", width=10, height=6, res=500)
+par(mfrow = c(3, 4))
+for (cpg in top_sites) {
+    
+    boxplot(tcga_hm450_filt[cpg, ] ~ condition, col = c("darkred", "cadetblue"), ylab = "methylation (beta)", 
+        xlab = "tissue", main = cpg, ylim = c(0, 1))
+}
+#dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

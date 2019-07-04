@@ -1,0 +1,703 @@
+---
+title: "open mutation analysis"
+author: "Lizabeth Katsnelson"
+date: "6/6/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, warning=F, results='hide', message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(ggplot2)
+library(maftools)
+
+```
+
+```{r}
+# load meta data
+clinical <- read.table("~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/serous_CCNE1_meta.txt", sep='\t', header=T) # read in meta data
+colnames(clinical)[1] <- "Tumor_Sample_Barcode" # change TCGA IDs column name to match maf file
+as_tibble(clinical)
+
+# get ccne1 groups
+ccne1_groups <- read.table("rna_sample_groups.txt", sep='\t', header=T)
+ccne1_groups$TCGA_ID <- as.character(ccne1_groups$TCGA_ID)
+as_tibble(ccne1_groups)
+
+# only amplified samples
+ccne1_amp <- ccne1_groups[ccne1_groups[,2] == "Amplified",]
+as_tibble(ccne1_amp)
+
+# only non-amplified samples
+ccne1_nonamp <- ccne1_groups[ccne1_groups[,2] == "Non-Amplified",]
+as_tibble(ccne1_nonamp)
+
+```
+
+
+```{r}
+### Load maf files
+
+# load varscan open file
+varscan_open <- read.table("somatic_mut_varscan_filt.txt", sep='\t', header=T)
+#varscan_open$Hugo_Symbol <- as.character(varscan_open$Hugo_Symbol)
+as_tibble(varscan_open)
+
+
+# load mutect open file
+mutect_open <- read.table("somatic_mut_mutect_filt.txt", sep='\t', header=T)
+#mutect_open$Hugo_Symbol <- as.character(mutect_open$Hugo_Symbol)
+as_tibble(mutect_open)
+
+
+# load muse open file
+muse_open <- read.table("somatic_mut_muse_filt.txt", sep='\t', header=T)
+#muse_open$Hugo_Symbol <- as.character(muse_open$Hugo_Symbol)
+as_tibble(muse_open)
+
+
+# load somaticsniper open file
+somaticsniper_open <- read.table("somatic_mut_somatsniper_filt.txt", sep='\t', header=T)
+#somaticsniper_open$Hugo_Symbol <- as.character(somaticsniper_open$Hugo_Symbol)
+as_tibble(somaticsniper_open)
+
+```
+
+
+---
+
+
+### Varscan Maftools
+```{r}
+### use read maf from maftools
+varscan_open_maf = read.maf(maf = varscan_open, clinicalData = clinical)
+varscan_open_maf
+
+# subset amplified samples
+amp_varscan_open_maf <- subsetMaf(maf = varscan_open_maf, tsb = c(ccne1_amp$TCGA_ID), mafObj = TRUE)
+amp_varscan_open_maf@clinical.data
+amp_varscan_open_maf
+
+# subset non-amplified samples
+nonamp_varscan_open_maf <- subsetMaf(maf = varscan_open_maf, tsb = c(ccne1_nonamp$TCGA_ID), mafObj = TRUE)
+nonamp_varscan_open_maf@clinical.data
+nonamp_varscan_open_maf
+```
+
+```{r}
+# sample summry
+getSampleSummary(varscan_open_maf)
+varscan_samp_sum_amp <- getSampleSummary(amp_varscan_open_maf)
+varscan_samp_sum_amp
+varscan_samp_sum_nonamp <- getSampleSummary(nonamp_varscan_open_maf)
+varscan_samp_sum_nonamp
+
+# gene summary.
+getGeneSummary(varscan_open_maf)
+getGeneSummary(amp_varscan_open_maf)
+getGeneSummary(nonamp_varscan_open_maf)
+```
+
+
+#### get genes for filtering out pure serous
+```{r}
+### total number genes mutated per sample
+varscan_genes_mutated_amp <- data.frame(TCGA_ID=varscan_samp_sum_amp$Tumor_Sample_Barcode, 
+                                        CCNE1_CNV=rep("Amplified"), 
+                                        Total_Gene=varscan_samp_sum_amp$total)
+
+varscan_genes_mutated_nonamp <- data.frame(TCGA_ID=varscan_samp_sum_nonamp$Tumor_Sample_Barcode, 
+                                           CCNE1_CNV=rep("Non_Amplified"),
+                                           Total_Gene=varscan_samp_sum_nonamp$total)
+
+varscan_total_genes_mut <- rbind(varscan_genes_mutated_amp, varscan_genes_mutated_nonamp)
+varscan_total_genes_mut
+
+### get TP53, PIK3CA, PPP2R1A, FBXW7, and PTEN mutations per sample
+varscan_mutated_genes <- data.frame(gene_symbol = varscan_open$Hugo_Symbol, TCGA_ID = varscan_open$Tumor_Sample_Barcode)
+varscan_mutated_genes
+
+varscan_mutated_genes_TP53 <- varscan_mutated_genes %>% filter(gene_symbol == "TP53")
+varscan_mutated_genes_TP53 <- unique(varscan_mutated_genes_TP53)
+varscan_mutated_genes_TP53$TP53 <- rep(1)
+varscan_mutated_genes_TP53 <- varscan_mutated_genes_TP53[,-1]
+varscan_mutated_genes_TP53
+
+varscan_mutated_genes_PIK3CA <- varscan_mutated_genes %>% filter(gene_symbol == "PIK3CA")
+varscan_mutated_genes_PIK3CA <- unique(varscan_mutated_genes_PIK3CA)
+varscan_mutated_genes_PIK3CA$PIK3CA <- rep(1)
+varscan_mutated_genes_PIK3CA <- varscan_mutated_genes_PIK3CA[,-1]
+varscan_mutated_genes_PIK3CA
+
+varscan_mutated_genes_PPP2R1A <- varscan_mutated_genes %>% filter(gene_symbol == "PPP2R1A")
+varscan_mutated_genes_PPP2R1A <- unique(varscan_mutated_genes_PPP2R1A)
+varscan_mutated_genes_PPP2R1A$PPP2R1A <- rep(1)
+varscan_mutated_genes_PPP2R1A <- varscan_mutated_genes_PPP2R1A[,-1]
+varscan_mutated_genes_PPP2R1A
+
+varscan_mutated_genes_FBXW7 <- varscan_mutated_genes %>% filter(gene_symbol == "FBXW7")
+varscan_mutated_genes_FBXW7 <- unique(varscan_mutated_genes_FBXW7)
+varscan_mutated_genes_FBXW7$FBXW7 <- rep(1)
+varscan_mutated_genes_FBXW7 <- varscan_mutated_genes_FBXW7[,-1]
+varscan_mutated_genes_FBXW7
+
+varscan_mutated_genes_PTEN <- varscan_mutated_genes %>% filter(gene_symbol == "PTEN")
+varscan_mutated_genes_PTEN <- unique(varscan_mutated_genes_PTEN)
+varscan_mutated_genes_PTEN$PTEN <- rep(1)
+varscan_mutated_genes_PTEN <- varscan_mutated_genes_PTEN[,-1]
+varscan_mutated_genes_PTEN
+
+
+total_varscan_mutation_meta <- join(varscan_total_genes_mut, varscan_mutated_genes_TP53, type="left")
+total_varscan_mutation_meta <- join(total_varscan_mutation_meta, varscan_mutated_genes_PIK3CA, type="left")
+total_varscan_mutation_meta <- join(total_varscan_mutation_meta, varscan_mutated_genes_PPP2R1A, type="left")
+total_varscan_mutation_meta <- join(total_varscan_mutation_meta, varscan_mutated_genes_FBXW7, type="left")
+total_varscan_mutation_meta <- join(total_varscan_mutation_meta, varscan_mutated_genes_PTEN, type="left")
+
+total_varscan_mutation_meta[is.na(total_varscan_mutation_meta)] <- 0
+total_varscan_mutation_meta
+
+ggplot(total_varscan_mutation_meta, aes(x=TCGA_ID, y=Total_Gene, fill=CCNE1_CNV)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") +
+  theme(axis.text.x = element_blank())
+
+
+### filter out TP53 wt, PTEN mutants, and hypermutated samples (>=250 total mutations)
+varscan_filtered_samples <- total_varscan_mutation_meta %>% filter(TP53 == 0 | PTEN == 1 | Total_Gene >= 250)
+varscan_filtered_samples
+plyr::count(varscan_filtered_samples$CCNE1_CNV)
+
+### filter for "true serous" (opposite filter than above)
+varscan_true_serous <- total_varscan_mutation_meta %>% filter(TP53 == 1 & PTEN == 0 & Total_Gene <= 250)
+varscan_true_serous
+plyr::count(varscan_true_serous$CCNE1_CNV)
+
+write.table(varscan_filtered_samples, file = "varscan_open_removed.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+write.table(varscan_true_serous, file = "varscan_open_filtered_serous.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+```
+
+
+
+
+
+
+
+```{r}
+# summary plots showing rates of types of mutations
+#plotmafSummary(maf = varscan_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+#plotmafSummary(maf = amp_varscan_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE) 
+#plotmafSummary(maf = nonamp_varscan_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+```
+
+```{r}
+# oncoplot for top ten mutated genes
+onc_plot_total_varscan <- oncoplot(maf = varscan_open_maf, top = 10)
+```
+```{r}
+onc_plot_amp_varscan <- oncoplot(maf = amp_varscan_open_maf, top = 10)
+```
+```{r}
+onc_plot_nonamp_varscan <- oncoplot(maf = nonamp_varscan_open_maf, top = 10)
+```
+
+```{r}
+onc_plot_total_varscan
+onc_plot_amp_varscan
+onc_plot_nonamp_varscan
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - total
+somaticInteractions(maf = varscan_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 amplified
+somaticInteractions(maf = amp_varscan_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 nonamplified
+somaticInteractions(maf = nonamp_varscan_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+
+
+
+---
+
+
+### Mutect Maftools
+```{r}
+### use read maf from maftools
+mutect_open_maf = read.maf(maf = mutect_open, clinicalData = clinical)
+mutect_open_maf
+
+# subset amplified samples
+amp_mutect_open_maf <- subsetMaf(maf = mutect_open_maf, tsb = c(ccne1_amp$TCGA_ID), mafObj = TRUE)
+amp_mutect_open_maf@clinical.data
+amp_mutect_open_maf
+
+# subset non-amplified samples
+nonamp_mutect_open_maf <- subsetMaf(maf = mutect_open_maf, tsb = c(ccne1_nonamp$TCGA_ID), mafObj = TRUE)
+nonamp_mutect_open_maf@clinical.data
+nonamp_mutect_open_maf
+```
+
+```{r}
+# sample summry
+getSampleSummary(mutect_open_maf)
+mutect_samp_sum_amp <- getSampleSummary(amp_mutect_open_maf)
+mutect_samp_sum_amp
+mutect_samp_sum_nonamp <- getSampleSummary(nonamp_mutect_open_maf)
+mutect_samp_sum_nonamp
+
+# gene summary.
+getGeneSummary(mutect_open_maf)
+getGeneSummary(amp_mutect_open_maf)
+getGeneSummary(nonamp_mutect_open_maf)
+```
+
+
+#### get genes for filtering out pure serous
+```{r}
+### total number genes mutated per sample
+mutect_genes_mutated_amp <- data.frame(TCGA_ID=mutect_samp_sum_amp$Tumor_Sample_Barcode, 
+                                        CCNE1_CNV=rep("Amplified"), 
+                                        Total_Gene=mutect_samp_sum_amp$total)
+
+mutect_genes_mutated_nonamp <- data.frame(TCGA_ID=mutect_samp_sum_nonamp$Tumor_Sample_Barcode, 
+                                           CCNE1_CNV=rep("Non_Amplified"),
+                                           Total_Gene=mutect_samp_sum_nonamp$total)
+
+mutect_total_genes_mut <- rbind(mutect_genes_mutated_amp, mutect_genes_mutated_nonamp)
+mutect_total_genes_mut
+
+### get TP53, PIK3CA, PPP2R1A, FBXW7, and PTEN mutations per sample
+mutect_mutated_genes <- data.frame(gene_symbol = mutect_open$Hugo_Symbol, TCGA_ID = mutect_open$Tumor_Sample_Barcode)
+mutect_mutated_genes
+
+mutect_mutated_genes_TP53 <- mutect_mutated_genes %>% filter(gene_symbol == "TP53")
+mutect_mutated_genes_TP53 <- unique(mutect_mutated_genes_TP53)
+mutect_mutated_genes_TP53$TP53 <- rep(1)
+mutect_mutated_genes_TP53 <- mutect_mutated_genes_TP53[,-1]
+mutect_mutated_genes_TP53
+
+mutect_mutated_genes_PIK3CA <- mutect_mutated_genes %>% filter(gene_symbol == "PIK3CA")
+mutect_mutated_genes_PIK3CA <- unique(mutect_mutated_genes_PIK3CA)
+mutect_mutated_genes_PIK3CA$PIK3CA <- rep(1)
+mutect_mutated_genes_PIK3CA <- mutect_mutated_genes_PIK3CA[,-1]
+mutect_mutated_genes_PIK3CA
+
+mutect_mutated_genes_PPP2R1A <- mutect_mutated_genes %>% filter(gene_symbol == "PPP2R1A")
+mutect_mutated_genes_PPP2R1A <- unique(mutect_mutated_genes_PPP2R1A)
+mutect_mutated_genes_PPP2R1A$PPP2R1A <- rep(1)
+mutect_mutated_genes_PPP2R1A <- mutect_mutated_genes_PPP2R1A[,-1]
+mutect_mutated_genes_PPP2R1A
+
+mutect_mutated_genes_FBXW7 <- mutect_mutated_genes %>% filter(gene_symbol == "FBXW7")
+mutect_mutated_genes_FBXW7 <- unique(mutect_mutated_genes_FBXW7)
+mutect_mutated_genes_FBXW7$FBXW7 <- rep(1)
+mutect_mutated_genes_FBXW7 <- mutect_mutated_genes_FBXW7[,-1]
+mutect_mutated_genes_FBXW7
+
+mutect_mutated_genes_PTEN <- mutect_mutated_genes %>% filter(gene_symbol == "PTEN")
+mutect_mutated_genes_PTEN <- unique(mutect_mutated_genes_PTEN)
+mutect_mutated_genes_PTEN$PTEN <- rep(1)
+mutect_mutated_genes_PTEN <- mutect_mutated_genes_PTEN[,-1]
+mutect_mutated_genes_PTEN
+
+
+total_mutect_mutation_meta <- join(mutect_total_genes_mut, mutect_mutated_genes_TP53, type="left")
+total_mutect_mutation_meta <- join(total_mutect_mutation_meta, mutect_mutated_genes_PIK3CA, type="left")
+total_mutect_mutation_meta <- join(total_mutect_mutation_meta, mutect_mutated_genes_PPP2R1A, type="left")
+total_mutect_mutation_meta <- join(total_mutect_mutation_meta, mutect_mutated_genes_FBXW7, type="left")
+total_mutect_mutation_meta <- join(total_mutect_mutation_meta, mutect_mutated_genes_PTEN, type="left")
+
+total_mutect_mutation_meta[is.na(total_mutect_mutation_meta)] <- 0
+total_mutect_mutation_meta
+
+ggplot(total_mutect_mutation_meta, aes(x=TCGA_ID, y=Total_Gene, fill=CCNE1_CNV)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") +
+  theme(axis.text.x = element_blank())
+
+
+### filter out TP53 wt, PTEN mutants, and hypermutated samples (>=250 total mutations)
+mutect_filtered_samples <- total_mutect_mutation_meta %>% filter(TP53 == 0 | PTEN == 1 | Total_Gene >= 250)
+mutect_filtered_samples
+plyr::count(mutect_filtered_samples$CCNE1_CNV)
+
+### filter for "true serous" (opposite filter than above)
+mutect_true_serous <- total_mutect_mutation_meta %>% filter(TP53 == 1 & PTEN == 0 & Total_Gene <= 250)
+mutect_true_serous
+plyr::count(mutect_true_serous$CCNE1_CNV)
+
+write.table(mutect_filtered_samples, file = "mutect_open_removed.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+write.table(mutect_true_serous, file = "mutect_open_filtered_serous.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+```
+
+
+
+```{r}
+# summary plots showing rates of types of mutations
+#plotmafSummary(maf = mutect_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+#plotmafSummary(maf = amp_mutect_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE) 
+#plotmafSummary(maf = nonamp_mutect_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+```
+
+```{r}
+# oncoplot for top ten mutated genes
+onc_plot_total_mutect <- oncoplot(maf = mutect_open_maf, top = 10)
+```
+```{r}
+onc_plot_amp_mutect <- oncoplot(maf = amp_mutect_open_maf, top = 10)
+```
+```{r}
+onc_plot_nonamp_mutect <- oncoplot(maf = nonamp_mutect_open_maf, top = 10)
+```
+
+```{r}
+onc_plot_total_mutect
+onc_plot_amp_mutect
+onc_plot_nonamp_mutect
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - total
+somaticInteractions(maf = mutect_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 amplified
+somaticInteractions(maf = amp_mutect_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 nonamplified
+somaticInteractions(maf = nonamp_mutect_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+
+
+---
+
+
+### Muse Maftools
+```{r}
+### use read maf from maftools
+muse_open_maf = read.maf(maf = muse_open, clinicalData = clinical)
+muse_open_maf
+
+# subset amplified samples
+amp_muse_open_maf <- subsetMaf(maf = muse_open_maf, tsb = c(ccne1_amp$TCGA_ID), mafObj = TRUE)
+amp_muse_open_maf@clinical.data
+amp_muse_open_maf
+
+# subset non-amplified samples
+nonamp_muse_open_maf <- subsetMaf(maf = muse_open_maf, tsb = c(ccne1_nonamp$TCGA_ID), mafObj = TRUE)
+nonamp_muse_open_maf@clinical.data
+nonamp_muse_open_maf
+```
+
+```{r}
+# sample summry
+getSampleSummary(muse_open_maf)
+muse_samp_sum_amp <- getSampleSummary(amp_muse_open_maf)
+muse_samp_sum_amp
+muse_samp_sum_nonamp <- getSampleSummary(nonamp_muse_open_maf)
+muse_samp_sum_nonamp
+
+# gene summary.
+getGeneSummary(muse_open_maf)
+getGeneSummary(amp_muse_open_maf)
+getGeneSummary(nonamp_muse_open_maf)
+```
+
+#### get genes for filtering out pure serous
+```{r}
+### total number genes mutated per sample
+muse_genes_mutated_amp <- data.frame(TCGA_ID=muse_samp_sum_amp$Tumor_Sample_Barcode, 
+                                        CCNE1_CNV=rep("Amplified"), 
+                                        Total_Gene=muse_samp_sum_amp$total)
+
+muse_genes_mutated_nonamp <- data.frame(TCGA_ID=muse_samp_sum_nonamp$Tumor_Sample_Barcode, 
+                                           CCNE1_CNV=rep("Non_Amplified"),
+                                           Total_Gene=muse_samp_sum_nonamp$total)
+
+muse_total_genes_mut <- rbind(muse_genes_mutated_amp, muse_genes_mutated_nonamp)
+muse_total_genes_mut
+
+### get TP53, PIK3CA, PPP2R1A, FBXW7, and PTEN mutations per sample
+muse_mutated_genes <- data.frame(gene_symbol = muse_open$Hugo_Symbol, TCGA_ID = muse_open$Tumor_Sample_Barcode)
+muse_mutated_genes
+
+muse_mutated_genes_TP53 <- muse_mutated_genes %>% filter(gene_symbol == "TP53")
+muse_mutated_genes_TP53 <- unique(muse_mutated_genes_TP53)
+muse_mutated_genes_TP53$TP53 <- rep(1)
+muse_mutated_genes_TP53 <- muse_mutated_genes_TP53[,-1]
+muse_mutated_genes_TP53
+
+muse_mutated_genes_PIK3CA <- muse_mutated_genes %>% filter(gene_symbol == "PIK3CA")
+muse_mutated_genes_PIK3CA <- unique(muse_mutated_genes_PIK3CA)
+muse_mutated_genes_PIK3CA$PIK3CA <- rep(1)
+muse_mutated_genes_PIK3CA <- muse_mutated_genes_PIK3CA[,-1]
+muse_mutated_genes_PIK3CA
+
+muse_mutated_genes_PPP2R1A <- muse_mutated_genes %>% filter(gene_symbol == "PPP2R1A")
+muse_mutated_genes_PPP2R1A <- unique(muse_mutated_genes_PPP2R1A)
+muse_mutated_genes_PPP2R1A$PPP2R1A <- rep(1)
+muse_mutated_genes_PPP2R1A <- muse_mutated_genes_PPP2R1A[,-1]
+muse_mutated_genes_PPP2R1A
+
+muse_mutated_genes_FBXW7 <- muse_mutated_genes %>% filter(gene_symbol == "FBXW7")
+muse_mutated_genes_FBXW7 <- unique(muse_mutated_genes_FBXW7)
+muse_mutated_genes_FBXW7$FBXW7 <- rep(1)
+muse_mutated_genes_FBXW7 <- muse_mutated_genes_FBXW7[,-1]
+muse_mutated_genes_FBXW7
+
+muse_mutated_genes_PTEN <- muse_mutated_genes %>% filter(gene_symbol == "PTEN")
+muse_mutated_genes_PTEN <- unique(muse_mutated_genes_PTEN)
+muse_mutated_genes_PTEN$PTEN <- rep(1)
+muse_mutated_genes_PTEN <- muse_mutated_genes_PTEN[,-1]
+muse_mutated_genes_PTEN
+
+
+total_muse_mutation_meta <- join(muse_total_genes_mut, muse_mutated_genes_TP53, type="left")
+total_muse_mutation_meta <- join(total_muse_mutation_meta, muse_mutated_genes_PIK3CA, type="left")
+total_muse_mutation_meta <- join(total_muse_mutation_meta, muse_mutated_genes_PPP2R1A, type="left")
+total_muse_mutation_meta <- join(total_muse_mutation_meta, muse_mutated_genes_FBXW7, type="left")
+total_muse_mutation_meta <- join(total_muse_mutation_meta, muse_mutated_genes_PTEN, type="left")
+
+total_muse_mutation_meta[is.na(total_muse_mutation_meta)] <- 0
+total_muse_mutation_meta
+
+ggplot(total_muse_mutation_meta, aes(x=TCGA_ID, y=Total_Gene, fill=CCNE1_CNV)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") +
+  theme(axis.text.x = element_blank())
+
+
+### filter out TP53 wt, PTEN mutants, and hypermutated samples (>=250 total mutations)
+muse_filtered_samples <- total_muse_mutation_meta %>% filter(TP53 == 0 | PTEN == 1 | Total_Gene >= 250)
+muse_filtered_samples
+plyr::count(muse_filtered_samples$CCNE1_CNV)
+
+### filter for "true serous" (opposite filter than above)
+muse_true_serous <- total_muse_mutation_meta %>% filter(TP53 == 1 & PTEN == 0 & Total_Gene <= 250)
+muse_true_serous
+plyr::count(muse_true_serous$CCNE1_CNV)
+
+
+write.table(muse_filtered_samples, file = "muse_open_removed.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+write.table(muse_true_serous, file = "muse_open_filtered_serous.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+```
+
+
+
+```{r}
+# summary plots showing rates of types of mutations
+#plotmafSummary(maf = muse_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+#plotmafSummary(maf = amp_muse_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE) 
+#plotmafSummary(maf = nonamp_muse_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+```
+
+```{r}
+# oncoplot for top ten mutated genes
+onc_plot_total_muse <- oncoplot(maf = muse_open_maf, top = 10)
+```
+```{r}
+onc_plot_amp_muse <- oncoplot(maf = amp_muse_open_maf, top = 10)
+```
+```{r}
+onc_plot_nonamp_muse <- oncoplot(maf = nonamp_muse_open_maf, top = 10)
+```
+
+```{r}
+onc_plot_total_muse
+onc_plot_amp_muse
+onc_plot_nonamp_muse
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - total
+somaticInteractions(maf = muse_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 amplified
+somaticInteractions(maf = amp_muse_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 nonamplified
+somaticInteractions(maf = nonamp_muse_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+
+---
+
+### SomaticSniper Maftools
+```{r}
+### use read maf from maftools
+somaticsniper_open_maf = read.maf(maf = somaticsniper_open, clinicalData = clinical)
+somaticsniper_open_maf
+
+# subset amplified samples
+amp_somaticsniper_open_maf <- subsetMaf(maf = somaticsniper_open_maf, tsb = c(ccne1_amp$TCGA_ID), mafObj = TRUE)
+amp_somaticsniper_open_maf@clinical.data
+amp_somaticsniper_open_maf
+
+# subset non-amplified samples
+nonamp_somaticsniper_open_maf <- subsetMaf(maf = somaticsniper_open_maf, tsb = c(ccne1_nonamp$TCGA_ID), mafObj = TRUE)
+nonamp_somaticsniper_open_maf@clinical.data
+nonamp_somaticsniper_open_maf
+```
+
+```{r}
+# sample summry
+getSampleSummary(somaticsniper_open_maf)
+somaticsniper_samp_sum_amp <- getSampleSummary(amp_somaticsniper_open_maf)
+somaticsniper_samp_sum_amp
+somaticsniper_samp_sum_nonamp <- getSampleSummary(nonamp_somaticsniper_open_maf)
+somaticsniper_samp_sum_nonamp
+
+# gene summary.
+getGeneSummary(somaticsniper_open_maf)
+getGeneSummary(amp_somaticsniper_open_maf)
+getGeneSummary(nonamp_somaticsniper_open_maf)
+```
+
+#### get genes for filtering out pure serous
+```{r}
+### total number genes mutated per sample
+somaticsniper_genes_mutated_amp <- data.frame(TCGA_ID=somaticsniper_samp_sum_amp$Tumor_Sample_Barcode, 
+                                        CCNE1_CNV=rep("Amplified"), 
+                                        Total_Gene=somaticsniper_samp_sum_amp$total)
+
+somaticsniper_genes_mutated_nonamp <- data.frame(TCGA_ID=somaticsniper_samp_sum_nonamp$Tumor_Sample_Barcode, 
+                                           CCNE1_CNV=rep("Non_Amplified"),
+                                           Total_Gene=somaticsniper_samp_sum_nonamp$total)
+
+somaticsniper_total_genes_mut <- rbind(somaticsniper_genes_mutated_amp, somaticsniper_genes_mutated_nonamp)
+somaticsniper_total_genes_mut
+
+### get TP53, PIK3CA, PPP2R1A, FBXW7, and PTEN mutations per sample
+somaticsniper_mutated_genes <- data.frame(gene_symbol = somaticsniper_open$Hugo_Symbol, TCGA_ID = somaticsniper_open$Tumor_Sample_Barcode)
+somaticsniper_mutated_genes
+
+somaticsniper_mutated_genes_TP53 <- somaticsniper_mutated_genes %>% filter(gene_symbol == "TP53")
+somaticsniper_mutated_genes_TP53 <- unique(somaticsniper_mutated_genes_TP53)
+somaticsniper_mutated_genes_TP53$TP53 <- rep(1)
+somaticsniper_mutated_genes_TP53 <- somaticsniper_mutated_genes_TP53[,-1]
+somaticsniper_mutated_genes_TP53
+
+somaticsniper_mutated_genes_PIK3CA <- somaticsniper_mutated_genes %>% filter(gene_symbol == "PIK3CA")
+somaticsniper_mutated_genes_PIK3CA <- unique(somaticsniper_mutated_genes_PIK3CA)
+somaticsniper_mutated_genes_PIK3CA$PIK3CA <- rep(1)
+somaticsniper_mutated_genes_PIK3CA <- somaticsniper_mutated_genes_PIK3CA[,-1]
+somaticsniper_mutated_genes_PIK3CA
+
+somaticsniper_mutated_genes_PPP2R1A <- somaticsniper_mutated_genes %>% filter(gene_symbol == "PPP2R1A")
+somaticsniper_mutated_genes_PPP2R1A <- unique(somaticsniper_mutated_genes_PPP2R1A)
+somaticsniper_mutated_genes_PPP2R1A$PPP2R1A <- rep(1)
+somaticsniper_mutated_genes_PPP2R1A <- somaticsniper_mutated_genes_PPP2R1A[,-1]
+somaticsniper_mutated_genes_PPP2R1A
+
+somaticsniper_mutated_genes_FBXW7 <- somaticsniper_mutated_genes %>% filter(gene_symbol == "FBXW7")
+somaticsniper_mutated_genes_FBXW7 <- unique(somaticsniper_mutated_genes_FBXW7)
+somaticsniper_mutated_genes_FBXW7$FBXW7 <- rep(1)
+somaticsniper_mutated_genes_FBXW7 <- somaticsniper_mutated_genes_FBXW7[,-1]
+somaticsniper_mutated_genes_FBXW7
+
+somaticsniper_mutated_genes_PTEN <- somaticsniper_mutated_genes %>% filter(gene_symbol == "PTEN")
+somaticsniper_mutated_genes_PTEN <- unique(somaticsniper_mutated_genes_PTEN)
+somaticsniper_mutated_genes_PTEN$PTEN <- rep(1)
+somaticsniper_mutated_genes_PTEN <- somaticsniper_mutated_genes_PTEN[,-1]
+somaticsniper_mutated_genes_PTEN
+
+
+total_somaticsniper_mutation_meta <- join(somaticsniper_total_genes_mut, somaticsniper_mutated_genes_TP53, type="left")
+total_somaticsniper_mutation_meta <- join(total_somaticsniper_mutation_meta, somaticsniper_mutated_genes_PIK3CA, type="left")
+total_somaticsniper_mutation_meta <- join(total_somaticsniper_mutation_meta, somaticsniper_mutated_genes_PPP2R1A, type="left")
+total_somaticsniper_mutation_meta <- join(total_somaticsniper_mutation_meta, somaticsniper_mutated_genes_FBXW7, type="left")
+total_somaticsniper_mutation_meta <- join(total_somaticsniper_mutation_meta, somaticsniper_mutated_genes_PTEN, type="left")
+
+total_somaticsniper_mutation_meta[is.na(total_somaticsniper_mutation_meta)] <- 0
+total_somaticsniper_mutation_meta
+
+ggplot(total_somaticsniper_mutation_meta, aes(x=TCGA_ID, y=Total_Gene, fill=CCNE1_CNV)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") +
+  theme(axis.text.x = element_blank())
+
+
+### filter out TP53 wt, PTEN mutants, and hypermutated samples (>=250 total mutations)
+somaticsniper_filtered_samples <- total_somaticsniper_mutation_meta %>% filter(TP53 == 0 | PTEN == 1 | Total_Gene >= 250)
+somaticsniper_filtered_samples
+plyr::count(somaticsniper_filtered_samples$CCNE1_CNV)
+
+### filter for "true serous" (opposite filter than above)
+somaticsniper_true_serous <- total_somaticsniper_mutation_meta %>% filter(TP53 == 1 & PTEN == 0 & Total_Gene <= 250)
+somaticsniper_true_serous
+plyr::count(somaticsniper_true_serous$CCNE1_CNV)
+
+write.table(somaticsniper_filtered_samples, file = "somaticsniper_open_removed.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+write.table(somaticsniper_true_serous, file = "somaticsniper_open_filtered_serous.txt", sep = "\t", col.names = T, row.names = F, quote = F) 
+```
+
+
+```{r}
+# summary plots showing rates of types of mutations
+#plotmafSummary(maf = somaticsniper_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+#plotmafSummary(maf = amp_somaticsniper_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE) 
+#plotmafSummary(maf = nonamp_somaticsniper_open_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+```
+
+```{r}
+# oncoplot for top ten mutated genes
+onc_plot_total_somaticsniper <- oncoplot(maf = somaticsniper_open_maf, top = 10)
+```
+```{r}
+onc_plot_amp_somaticsniper <- oncoplot(maf = amp_somaticsniper_open_maf, top = 10)
+```
+```{r}
+onc_plot_nonamp_somaticsniper <- oncoplot(maf = nonamp_somaticsniper_open_maf, top = 10)
+```
+
+```{r}
+onc_plot_total_somaticsniper
+onc_plot_amp_somaticsniper
+onc_plot_nonamp_somaticsniper
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - total
+somaticInteractions(maf = somaticsniper_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 amplified
+somaticInteractions(maf = amp_somaticsniper_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+# exclusive/co-occurance event analysis on top 25 mutated genes - ccne1 nonamplified
+somaticInteractions(maf = nonamp_somaticsniper_open_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+
+
+
+
+
+
+
+

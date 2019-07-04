@@ -1,0 +1,493 @@
+---
+title: "mutation"
+author: "Lizabeth Katsnelson"
+date: "5/21/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=F, results='hide', message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(ggplot2)
+
+#BiocManager::install("maftools")
+library(maftools)
+
+### add boxplot of number of genes mutated per cohort
+```
+
+
+### MAFTOOLS
+
+```{r}
+somatic_mut <- read.table("~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/somatic_mut_varscan_filt.txt", sep='\t', header=T)
+somatic_mut$Hugo_Symbol <- as.character(somatic_mut$Hugo_Symbol)
+as_tibble(somatic_mut)
+
+clinical <- read.table("~/Documents/BMI/_Thesis/TCGA_wrangling_analysis/serous_CCNE1_meta.txt", sep='\t', header=T) # read in meta data
+colnames(clinical)[1] <- "Tumor_Sample_Barcode" # change TCGA IDs column name to match maf file
+as_tibble(clinical)
+
+
+# get ccne1 groups
+ccne1_groups <- read.table("rna_sample_groups.txt", sep='\t', header=T)
+ccne1_groups$TCGA_ID <- as.character(ccne1_groups$TCGA_ID)
+as_tibble(ccne1_groups)
+
+# only amplified samples
+ccne1_amp <- ccne1_groups[ccne1_groups[,2] == "Amplified",]
+as_tibble(ccne1_amp)
+
+# only non-amplified samples
+ccne1_nonamp <- ccne1_groups[ccne1_groups[,2] == "Non-Amplified",]
+as_tibble(ccne1_nonamp)
+
+
+```
+
+
+
+```{r}
+### use read maf from maftools
+somatic_mut_maf = read.maf(maf = somatic_mut, clinicalData = clinical)
+somatic_mut_maf
+
+# subset amplified samples
+amp_somatic_mut_maf <- subsetMaf(maf = somatic_mut_maf, tsb = c(ccne1_amp$TCGA_ID), mafObj = TRUE)
+amp_somatic_mut_maf@clinical.data
+amp_somatic_mut_maf
+
+# subset non-amplified samples
+nonamp_somatic_mut_maf <- subsetMaf(maf = somatic_mut_maf, tsb = c(ccne1_nonamp$TCGA_ID), mafObj = TRUE)
+nonamp_somatic_mut_maf@clinical.data
+nonamp_somatic_mut_maf
+
+```
+
+
+
+```{r}
+# sample summry
+getSampleSummary(somatic_mut_maf)
+getSampleSummary(amp_somatic_mut_maf)
+getSampleSummary(nonamp_somatic_mut_maf)
+
+
+```
+
+
+```{r}
+amp_sum_filt <- data.frame(TCGA_ID=amp_summary$Tumor_Sample_Barcode, Total_Gene=amp_summary$total, CCNE1_CNV=rep("Amplified"))
+amp_sum_filt
+
+nonamp_sum_filt <- data.frame(TCGA_ID=nonamp_summary$Tumor_Sample_Barcode, Total_Gene=nonamp_summary$total, CCNE1_CNV=rep("Non_Amplified"))
+nonamp_sum_filt
+
+mutation_df <- rbind(amp_sum_filt, nonamp_sum_filt)
+mutation_df <- mutation_df[-56,] # remove hypermutated sample
+mutation_df
+
+```
+
+```{r fig.height=6, fig.width=10}
+ggplot(mutation_df, aes(x=TCGA_ID, y=Total_Gene, fill=CCNE1_CNV)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c(Non_Amplified = "dodgerblue2", Amplified = "darkred"), name="CCNE1 CNV") +
+  theme(axis.text.x = element_blank())
+
+```
+
+
+
+
+
+```{r}
+# gene summary.
+getGeneSummary(somatic_mut_maf) # 15,799 different genes mutated in total cohort
+
+getGeneSummary(amp_somatic_mut_maf) # 2,391 different genes mutated in amplified cohort
+
+getGeneSummary(nonamp_somatic_mut_maf) # 15,608 different genes mutated in non-amplified cohort
+```
+
+```{r}
+#top_ten_mut_genes <- c("TP53", "PIK3CA", "PPP2R1A", 'FBXW7', "TTN", "CHD4", "ARHGAP35", "CSMD3", "KMT2D", "PTEN")
+
+mutated_genes <- data.frame(gene_symbol = somatic_mut$Hugo_Symbol, TCGA_ID = somatic_mut$Tumor_Sample_Barcode)
+mutated_genes
+
+#filtered for top 10 mutated genes
+mutated_genes_TP53 <- mutated_genes %>% filter(gene_symbol == "TP53")
+mutated_genes_TP53 <- unique(mutated_genes_TP53)
+mutated_genes_TP53$TP53 <- rep(1)
+mutated_genes_TP53 <- mutated_genes_TP53[,-1]
+mutated_genes_TP53
+
+mutated_genes_PIK3CA <- mutated_genes %>% filter(gene_symbol == "PIK3CA")
+mutated_genes_PIK3CA <- unique(mutated_genes_PIK3CA)
+mutated_genes_PIK3CA$PIK3CA <- rep(1)
+mutated_genes_PIK3CA <- mutated_genes_PIK3CA[,-1]
+mutated_genes_PIK3CA
+
+mutated_genes_PPP2R1A <- mutated_genes %>% filter(gene_symbol == "PPP2R1A")
+mutated_genes_PPP2R1A <- unique(mutated_genes_PPP2R1A)
+mutated_genes_PPP2R1A$PPP2R1A <- rep(1)
+mutated_genes_PPP2R1A <- mutated_genes_PPP2R1A[,-1]
+mutated_genes_PPP2R1A
+
+mutated_genes_FBXW7 <- mutated_genes %>% filter(gene_symbol == "FBXW7")
+mutated_genes_FBXW7 <- unique(mutated_genes_FBXW7)
+mutated_genes_FBXW7$FBXW7 <- rep(1)
+mutated_genes_FBXW7 <- mutated_genes_FBXW7[,-1]
+mutated_genes_FBXW7
+
+mutated_genes_TTN <- mutated_genes %>% filter(gene_symbol == "TTN")
+mutated_genes_TTN <- unique(mutated_genes_TTN)
+mutated_genes_TTN$TTN <- rep(1)
+mutated_genes_TTN <- mutated_genes_TTN[,-1]
+mutated_genes_TTN
+
+mutated_genes_CHD4 <- mutated_genes %>% filter(gene_symbol == "CHD4")
+mutated_genes_CHD4 <- unique(mutated_genes_CHD4)
+mutated_genes_CHD4$CHD4 <- rep(1)
+mutated_genes_CHD4 <- mutated_genes_CHD4[,-1]
+mutated_genes_CHD4
+
+mutated_genes_ARHGAP35 <- mutated_genes %>% filter(gene_symbol == "ARHGAP35")
+mutated_genes_ARHGAP35 <- unique(mutated_genes_ARHGAP35)
+mutated_genes_ARHGAP35$ARHGAP35 <- rep(1)
+mutated_genes_ARHGAP35 <- mutated_genes_ARHGAP35[,-1]
+mutated_genes_ARHGAP35
+
+mutated_genes_CSMD3 <- mutated_genes %>% filter(gene_symbol == "CSMD3")
+mutated_genes_CSMD3 <- unique(mutated_genes_CSMD3)
+mutated_genes_CSMD3$CSMD3 <- rep(1)
+mutated_genes_CSMD3 <- mutated_genes_CSMD3[,-1]
+mutated_genes_CSMD3
+
+mutated_genes_KMT2D <- mutated_genes %>% filter(gene_symbol == "KMT2D")
+mutated_genes_KMT2D <- unique(mutated_genes_KMT2D)
+mutated_genes_KMT2D$KMT2D <- rep(1)
+mutated_genes_KMT2D <- mutated_genes_KMT2D[,-1]
+mutated_genes_KMT2D
+
+mutated_genes_PTEN <- mutated_genes %>% filter(gene_symbol == "PTEN")
+mutated_genes_PTEN <- unique(mutated_genes_PTEN)
+mutated_genes_PTEN$PTEN <- rep(1)
+mutated_genes_PTEN <- mutated_genes_PTEN[,-1]
+mutated_genes_PTEN
+
+ccne1_groups
+
+
+ccne1_mutation_meta <- join(ccne1_groups, mutated_genes_TP53, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_PIK3CA, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_PPP2R1A, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_FBXW7, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_TTN, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_CHD4, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_ARHGAP35, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_CSMD3, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_KMT2D, type="left")
+ccne1_mutation_meta <- join(ccne1_mutation_meta, mutated_genes_PTEN, type="left")
+
+ccne1_mutation_meta[is.na(ccne1_mutation_meta)] <- 0
+ccne1_mutation_meta
+
+#write.table(ccne1_mutation_meta, file = "ccne1_mutation_meta.txt", sep = "\t", col.names = T, row.names = F, quote = F)
+```
+
+
+
+```{r, error=FALSE}
+# summary plots showing rates of types of mutations
+
+plotmafSummary(maf = somatic_mut_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+
+plotmafSummary(maf = amp_somatic_mut_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE) 
+
+plotmafSummary(maf = nonamp_somatic_mut_maf, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE)
+
+
+```
+
+
+```{r}
+# oncoplot for top ten mutated genes
+onc_plot_total <- oncoplot(maf = somatic_mut_maf, top = 10)
+
+onc_plot_amp <- oncoplot(maf = amp_somatic_mut_maf, top = 10)
+
+onc_plot_nonamp <- oncoplot(maf = nonamp_somatic_mut_maf, top = 10)
+
+```
+
+```{r}
+onc_plot_total
+onc_plot_amp
+onc_plot_nonamp
+```
+
+
+
+```{r}
+onc_strip_total <- oncostrip(maf = somatic_mut_maf, genes = c('TP53','PIK3CA', 'PPP2R1A', 'FBXW7', 'TTN', 'CHD4', 'ARHGAP35', 'CSMD3', 'KMT2D', 'PTEN'))
+
+onc_strip_amp <- oncostrip(maf = amp_somatic_mut_maf, genes = c('TP53','PIK3CA', 'PPP2R1A', 'FBXW7', 'TTN', 'CHD4', 'ARHGAP35', 'CSMD3', 'KMT2D', 'PTEN'))
+
+onc_strip_nonamp <- oncostrip(maf = nonamp_somatic_mut_maf, genes = c('TP53','PIK3CA', 'PPP2R1A', 'FBXW7', 'TTN', 'CHD4', 'ARHGAP35', 'CSMD3', 'KMT2D', 'PTEN'))
+
+```
+
+```{r}
+onc_strip_total
+
+onc_strip_amp
+
+onc_strip_nonamp
+
+```
+
+
+```{r}
+### Plot transitions and transversions
+
+# transitions: interchanges of two-ring purines (A <-> G) or of one-ring pyrimidines (C <-> T)
+# transverstions: interchanges of purine for pyrimidine bases, which therefore involve exchange of one-ring and two-ring structures
+  ### G to C or T, A to C or T (and visa versa)
+
+somatic_titv = titv(maf = somatic_mut_maf, plot = FALSE, useSyn = TRUE)
+
+# plot titv summary
+plotTiTv(res = somatic_titv)
+```
+
+```{r}
+# lollipop plot for TP53
+lollipopPlot(maf = somatic_mut_maf, gene = 'TP53', AACol = 'Protein_Change', showMutationRate = TRUE)
+
+# lollipop plot for PTEN
+lollipopPlot(maf = somatic_mut_maf, gene = 'PTEN', AACol = 'Protein_Change', showMutationRate = TRUE)
+
+# lollipop plot for PIK3CA
+lollipopPlot(maf = somatic_mut_maf, gene = 'PIK3CA', AACol = 'Protein_Change', showMutationRate = TRUE)
+
+# lollipop plot for FBXW7
+lollipopPlot(maf = somatic_mut_maf, gene = 'FBXW7', AACol = 'Protein_Change', showMutationRate = TRUE)
+```
+
+
+```{r fig.height=5, fig.width=15}
+# plot on chromosome level
+rainfallPlot(maf = somatic_mut_maf, detectChangePoints = TRUE, pointSize = 0.6)
+
+```
+
+
+```{r}
+# compare to other TCGA cohorts
+somatic_mutload = tcgaCompare(maf = somatic_mut_maf, cohortName = 'UCEC Serous')
+
+somatic_mutload = tcgaCompare(maf = amp_somatic_mut_maf, cohortName = 'UCEC Serous CCNE1 Amp')
+
+somatic_mutload = tcgaCompare(maf = nonamp_somatic_mut_maf, cohortName = 'UCEC Serous CCNE1 NonAmp')
+
+
+
+```
+
+
+```{r}
+# exclusive/co-occurance event analysis on top 10 mutated genes. 
+somaticInteractions(maf = somatic_mut_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+```{r}
+somaticInteractions(maf = amp_somatic_mut_maf, top = 25, pvalue = c(0.05, 0.01)) 
+# SPOP, MUC4, TTN, MUC16, CSMD3, FBXW7
+
+```
+
+```{r}
+somaticInteractions(maf = nonamp_somatic_mut_maf, top = 25, pvalue = c(0.05, 0.01))
+```
+
+
+
+```{r}
+onc_strip_exclusive_total <- oncostrip(maf = somatic_mut_maf, genes = c("SPOP", "MUC4", "TTN", "MUC16", "CSMD3", "FBXW7"))
+
+onc_strip_exclusive_amp <- oncostrip(maf = amp_somatic_mut_maf, genes = c("SPOP", "MUC4", "TTN", "MUC16", "CSMD3", "FBXW7"))
+
+onc_strip_exclusive_nonamp <- oncostrip(maf = nonamp_somatic_mut_maf, genes = c("SPOP", "MUC4", "TTN", "MUC16", "CSMD3", "FBXW7"))
+
+```
+
+```{r}
+onc_strip_exclusive_total
+onc_strip_exclusive_amp
+onc_strip_exclusive_nonamp
+```
+
+
+
+
+
+
+```{r}
+somatic_mut_sig = oncodrive(maf = somatic_mut_maf, AACol = 'Protein_Change', minMut = 5, pvalMethod = 'zscore')
+head(somatic_mut_sig)
+
+plotOncodrive(res = somatic_mut_sig, fdrCutOff = 0.1, useFraction = TRUE)
+```
+
+
+```{r}
+# drug targets
+dgi = drugInteractions(maf = somatic_mut_maf, fontSize = 0.75)
+dgi
+
+## Number of claimed drugs for given genes:
+TP53.dgi = drugInteractions(genes = "TP53", drugs = TRUE)
+#Printing selected columns.
+TP53.dgi[,.(Gene, interaction_types, drug_name, drug_claim_name)]
+
+PTEN.dgi = drugInteractions(genes = "PTEN", drugs = TRUE)
+PIK3CA.dgi = drugInteractions(genes = "PIK3CA", drugs = TRUE)
+FBXW7.dgi = drugInteractions(genes = "FBXW7", drugs = TRUE)
+
+```
+
+```{r}
+dgi_amp = drugInteractions(maf = amp_somatic_mut_maf, fontSize = 0.75)
+dgi_amp
+
+dgi_nonamp = drugInteractions(maf = nonamp_somatic_mut_maf, fontSize = 0.75)
+dgi_nonamp
+```
+
+
+
+```{r}
+### Signaling Pathways - total
+OncogenicPathways(maf = somatic_mut_maf)
+
+### Signaling Pathways - Amplified
+OncogenicPathways(maf = amp_somatic_mut_maf)
+
+### Signaling Pathways - NONAmplified
+OncogenicPathways(maf = nonamp_somatic_mut_maf)
+
+```
+
+
+```{r}
+### RTK-RAS
+#Tumor suppressor genes are in red, and oncogenes are in blue font.
+
+PlotOncogenicPathways(maf = somatic_mut_maf, pathways = "RTK-RAS")
+
+PlotOncogenicPathways(maf = amp_somatic_mut_maf, pathways = "RTK-RAS")
+
+PlotOncogenicPathways(maf = nonamp_somatic_mut_maf, pathways = "RTK-RAS")
+
+```
+
+
+```{r}
+### NOTCH
+#Tumor suppressor genes are in red, and oncogenes are in blue font.
+
+PlotOncogenicPathways(maf = somatic_mut_maf, pathways = "NOTCH")
+
+PlotOncogenicPathways(maf = amp_somatic_mut_maf, pathways = "NOTCH")
+
+PlotOncogenicPathways(maf = nonamp_somatic_mut_maf, pathways = "NOTCH")
+```
+
+
+```{r}
+### WNT
+#Tumor suppressor genes are in red, and oncogenes are in blue font.
+
+PlotOncogenicPathways(maf = somatic_mut_maf, pathways = "WNT")
+
+PlotOncogenicPathways(maf = amp_somatic_mut_maf, pathways = "WNT")
+
+PlotOncogenicPathways(maf = nonamp_somatic_mut_maf, pathways = "WNT")
+
+```
+
+
+
+```{r}
+### Mutation signature enrichment - total
+
+#BiocManager::install("BSgenome.Hsapiens.UCSC.hg38")
+library(BSgenome.Hsapiens.UCSC.hg38, quietly = TRUE)
+somatic_mut_maf_tnm = trinucleotideMatrix(maf = somatic_mut_maf, ref_genome = "BSgenome.Hsapiens.UCSC.hg38")
+
+
+#Run main function with maximum 6 signatures. 
+library(NMF)
+library(pheatmap)
+somatic_mut_maf_sig = extractSignatures(mat = somatic_mut_maf_tnm, nTry = 6, plotBestFitRes = FALSE)
+
+plotSignatures(somatic_mut_maf_sig, title_size = 0.8)
+pheatmap(mat = somatic_mut_maf_sig$coSineSimMat, cluster_rows = FALSE, main = "cosine similarity against validated signatures")
+
+
+somatic_mut_maf_se = signatureEnrichment(maf = somatic_mut_maf, sig_res = somatic_mut_maf_sig)
+plotEnrichmentResults(enrich_res = somatic_mut_maf_se, pVal = 0.05)
+```
+
+```{r}
+### Mutation signature enrichment - Amplified
+
+#BiocManager::install("BSgenome.Hsapiens.UCSC.hg38")
+library(BSgenome.Hsapiens.UCSC.hg38, quietly = TRUE)
+amp_somatic_mut_maf_tnm = trinucleotideMatrix(maf = amp_somatic_mut_maf, ref_genome = "BSgenome.Hsapiens.UCSC.hg38")
+
+
+#Run main function with maximum 6 signatures. 
+library(NMF)
+library(pheatmap)
+amp_somatic_mut_maf_sig = extractSignatures(mat = amp_somatic_mut_maf_tnm, nTry = 6, plotBestFitRes = FALSE)
+
+plotSignatures(amp_somatic_mut_maf_sig, title_size = 0.8)
+pheatmap(mat = amp_somatic_mut_maf_sig$coSineSimMat, cluster_rows = FALSE, main = "cosine similarity against validated signatures")
+
+
+amp_somatic_mut_maf_se = signatureEnrichment(maf = amp_somatic_mut_maf, sig_res = amp_somatic_mut_maf_sig)
+plotEnrichmentResults(enrich_res = amp_somatic_mut_maf_se, pVal = 0.05)
+```
+
+```{r}
+### Mutation signature enrichment - NONAmplified
+
+#BiocManager::install("BSgenome.Hsapiens.UCSC.hg38")
+library(BSgenome.Hsapiens.UCSC.hg38, quietly = TRUE)
+nonamp_somatic_mut_maf_tnm = trinucleotideMatrix(maf = nonamp_somatic_mut_maf, ref_genome = "BSgenome.Hsapiens.UCSC.hg38")
+
+
+#Run main function with maximum 6 signatures. 
+library(NMF)
+library(pheatmap)
+nonamp_somatic_mut_maf_sig = extractSignatures(mat = nonamp_somatic_mut_maf_tnm, nTry = 6, plotBestFitRes = FALSE)
+
+plotSignatures(nonamp_somatic_mut_maf_sig, title_size = 0.8)
+pheatmap(mat = nonamp_somatic_mut_maf_sig$coSineSimMat, cluster_rows = FALSE, main = "cosine similarity against validated signatures")
+
+
+nonamp_somatic_mut_maf_se = signatureEnrichment(maf = nonamp_somatic_mut_maf, sig_res = nonamp_somatic_mut_maf_sig)
+plotEnrichmentResults(enrich_res = nonamp_somatic_mut_maf_se, pVal = 0.05)
+```
+
+
+
+
